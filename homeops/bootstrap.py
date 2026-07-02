@@ -39,13 +39,15 @@ class World:
                                    "tick": self.engine.tick})
 
 
-def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = True, adapter=None) -> World:
+def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = True, adapter=None,
+                audit_path: str | None = None) -> World:
     """Build the world. `adapter=None` uses the in-process SimAdapter (default, for tests/demos);
     pass a real adapter (e.g. CompositeAdapter of HomeAssistantAdapter+OPNsenseAdapter) to drive
-    actual hardware — nothing above the adapter layer changes."""
+    actual hardware — nothing above the adapter layer changes. `audit_path` persists the
+    tamper-evident audit chain to an append-only JSONL file (reloaded + re-verified on restart)."""
     houses = load_houses(config_path)
     engine = PermissionEngine()
-    audit = AuditLog()
+    audit = AuditLog(audit_path)
     state = StateStore(houses, audit=audit, clock=lambda: engine.tick)
     bus = EventBus()
     ha = HASim(state)
