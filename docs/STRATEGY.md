@@ -6,7 +6,7 @@ Skeptical, no hype. Separates what is real from what must be built.
 **Build — with a mandatory pivot and hard narrowing.** This is not an "AI smart-home app" or an
 "estate OS." The defensible asset is the deterministic **permission-and-audit governor + local-first
 resilience** pattern — *not* the AI, which is the biggest liability and least defensible feature.
-Maturity: ~5% of a product (a strong reference implementation + a credible point of view, 62 offline
+Maturity: ~5% of a product (a strong reference implementation + a credible point of view, ~90 offline
 tests, zero real deployment). The viable business is a **managed catastrophe-prevention & oversight
 service for multi-property owners**, kernelled on the engine, with the AI kept advisory. It is a
 **services business with software leverage**, not a SaaS land-grab.

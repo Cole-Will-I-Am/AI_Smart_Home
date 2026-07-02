@@ -66,7 +66,8 @@ decides.
 
 ```bash
 pip install -r requirements.txt          # PyYAML + pytest (anthropic only for the live test)
-pytest -q                                # 37 tests: permissions, router, automations, fail-safe, local-first, AI-ops (offline)
+pytest -q                                # full offline suite: permissions, router, automations, fail-safe,
+                                         #   local-first, AI-ops, audit, health, RBAC, portfolio, exporters, dashboard
 python scripts/run_scenario.py all       # replays leak / grid-loss / fire-CO / intrusion / rogue-device with asserted timelines
 python scripts/demo.py                   # end-to-end two-house demo (cross-house guard, WAN-down local-first, L4 refusal)
 python -m homeops.cli status             # dashboard of both houses
@@ -141,7 +142,28 @@ a regression test in `tests/test_hardening.py`:
 > automations run in the Python event bus. A production deployment should ALSO express the
 > life-safety subset (leak, fire/CO, freeze) as **native Home Assistant / Node-RED automations** so
 > they keep running even if this Python process dies. The Python layer is the AI-coordination and
-> validation tier; it is not the last line of defense.
+> validation tier; it is not the last line of defense. `homeops.exporters` generates exactly those
+> native HA automations — see below.
+
+### Pilot-hardening modules (`docs/PRODUCTIZATION.md`)
+
+Beyond the core reference impl, these move it toward a pilot-ready managed service (each with tests):
+
+- **`homeops/audit.py`** — tamper-evident, hash-chained, append-only audit (`verify_chain()`), optional
+  JSONL persistence reloaded + re-verified on restart.
+- **`homeops/health.py`** — per-device health/heartbeat; the router refuses safety-critical actuation on
+  an offline/stale device and records `unverified` when a device accepts a command but doesn't move.
+- **`homeops/identity.py`** — RBAC: authenticated principals (owner / estate-manager / installer /
+  monitor / …) with a role capability cap and per-property scope.
+- **`homeops/portfolio.py`** + **`config/portfolio.example.yaml`** — N-property portfolio view (the
+  estate/family-office shape); **`homeops/adapters/per_property.py`** routes each property to its own HA/OPNsense.
+- **`homeops/exporters/`** — emits native Home Assistant life-safety automation YAML (leak/freeze/fire-CO).
+- **`homeops/dashboard.py`** — self-contained HTML operator oversight view (`render_dashboard`).
+
+The full commercialization analysis and blocker ranking are in **`docs/STRATEGY.md`** and
+**`docs/PRODUCTIZATION.md`**. Reality check: this is pilot-hardening *scaffolding* — real deployment
+still requires an independent security review, verified fail-safe on real hardware, licensed-professional
+installation, and a liability/insurance structure.
 
 ## Reference stack (local-first)
 
