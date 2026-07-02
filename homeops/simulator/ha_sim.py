@@ -39,6 +39,9 @@ class HASim:
         e = self.state.entity(intent.entity_id)
         if e is None:
             return {"ok": False, "message": f"no such entity {intent.entity_id}"}
+        if e.attributes.get("unresponsive"):
+            # device ACKs the command but doesn't actually move — caught by the router's read-back
+            return {"ok": True, "message": f"{intent.entity_id} accepted but did not actuate", "undo": None}
         prior = e.state
         undo = {"entity_id": intent.entity_id, "state": prior}
         s, a, args = intent.subsystem, intent.action, intent.args

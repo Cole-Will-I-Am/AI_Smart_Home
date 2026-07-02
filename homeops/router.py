@@ -7,7 +7,7 @@ the AI can only *propose* intents; it cannot bypass any of these checks.
 """
 from __future__ import annotations
 from .permissions import (
-    PermissionEngine, Intent, Operator, Result, CONFIRM_REQUIRED,
+    PermissionEngine, Intent, Operator, Result, CONFIRM_REQUIRED, SAFETY_CRITICAL, EXPECTED_STATE,
 )
 from .audit import AuditLog, AuditRecord
 from .adapters.base import Adapter
@@ -15,11 +15,13 @@ from .state import StateStore
 
 
 class CommandRouter:
-    def __init__(self, engine: PermissionEngine, state: StateStore, adapter: Adapter, audit: AuditLog) -> None:
+    def __init__(self, engine: PermissionEngine, state: StateStore, adapter: Adapter, audit: AuditLog,
+                 health=None) -> None:
         self.engine = engine
         self.state = state
         self.adapter = adapter
         self.audit = audit
+        self.health = health   # optional HealthRegistry; gates safety-critical actuation
 
     def _audit(self, intent: Intent, operator: Operator, status: str, message: str,
                level: int | None, rollback: str | None = None, ctoken: str | None = None) -> Result:
@@ -77,9 +79,33 @@ class CommandRouter:
             return self._audit(intent, operator, "refused",
                                f"cooldown: {intent.subsystem}.{intent.action} actuated too recently", level)
 
+        # Safety-critical health gate: never actuate a lock/valve/generator/HVAC-cutoff we can't
+        # confirm is present and responsive.
+        key = (intent.subsystem, intent.action)
+        if self.health is not None and key in SAFETY_CRITICAL:
+            hstatus = self.health.status(intent.entity_id, eng.tick)
+            if not self.health.healthy(intent.entity_id, eng.tick):
+                return self._audit(intent, operator, "refused",
+                                   f"device {intent.entity_id} is {hstatus} — refusing safety-critical actuation", level)
+
         res = self.adapter.apply(intent)
         if not res.get("ok"):
             return self._audit(intent, operator, "refused", res.get("message", "device error"), level)
+
+        # Verified actuation: for safety-critical actions the adapter didn't already verify, read the
+        # resulting state back and require it to match the commanded outcome. A device that accepts a
+        # command but doesn't move is recorded as UNVERIFIED (not executed) and flagged unhealthy.
+        expect = EXPECTED_STATE.get(key)
+        if expect is not None and not res.get("verified"):
+            actual = self.state.get_state(intent.entity_id)
+            if actual not in expect:
+                if self.health is not None:
+                    self.health.mark_offline(intent.entity_id)
+                return self._audit(intent, operator, "unverified",
+                                   f"{intent.entity_id} did not reach {expect} (state={actual!r}) — NOT confirmed", level)
+
+        if self.health is not None:
+            self.health.heartbeat(intent.entity_id, eng.tick)   # the device responded
 
         rollback = None
         if res.get("undo"):

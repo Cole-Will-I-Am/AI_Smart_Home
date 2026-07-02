@@ -29,7 +29,8 @@ def test_generator_fail_then_manual_start(bare):
     r1 = bare.router.execute(Intent("house_a", "generator", "main", "start"), owner())
     r2 = bare.router.execute(
         Intent("house_a", "generator", "main", "start", confirm_token=r1.confirm_token), owner())
-    assert r2.status == "executed"
+    # a generator that fails to start is UNVERIFIED, not "executed" — read-back caught it
+    assert r2.status == "unverified"
     assert bare.state.get_state("house_a.generator.main") == "failed"
     bare.state.manual_override("house_a.generator.main", "running")
     assert bare.state.get_state("house_a.generator.main") == "running"

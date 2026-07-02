@@ -52,6 +52,21 @@ DESTRUCTIVE_COOLDOWN: dict[tuple[str, str], int] = {
     ("power", "breaker_off"): 3,
 }
 
+# Safety-critical actuations: gated on device health (offline/stale -> refuse) and verified by
+# read-back afterwards. EXPECTED maps each to the state(s) that count as a confirmed outcome
+# (a transitional state like "closing"/"starting" is acceptable — the physical move is underway).
+SAFETY_CRITICAL: set[tuple[str, str]] = {
+    ("lock", "lock"), ("lock", "unlock"),
+    ("water", "shutoff_main"), ("water", "open_main"),
+    ("hvac", "emergency_shutoff"), ("generator", "start"),
+}
+EXPECTED_STATE: dict[tuple[str, str], set] = {
+    ("lock", "lock"): {"locked"}, ("lock", "unlock"): {"unlocked"},
+    ("water", "shutoff_main"): {"closed", "closing"}, ("water", "open_main"): {"open"},
+    ("hvac", "emergency_shutoff"): {"off"},
+    ("generator", "start"): {"starting", "running"},
+}
+
 
 @dataclass
 class Operator:

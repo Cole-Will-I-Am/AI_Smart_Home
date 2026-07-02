@@ -192,7 +192,9 @@ class HomeAssistantAdapter(Adapter):
                 return {"ok": False,
                         "message": f"HA {domain}.{service} {ha_entity} UNVERIFIED (state={actual!r}, expected {expect!r})",
                         "undo": None}
-        return {"ok": True, "message": f"HA {domain}.{service} {ha_entity}", "undo": undo}
+        # verified=True tells the router this adapter already confirmed the outcome against the real
+        # device — the router must NOT re-verify against the (sim-style) state store.
+        return {"ok": True, "message": f"HA {domain}.{service} {ha_entity}", "undo": undo, "verified": True}
 
     def undo(self, undo: dict) -> None:
         u = undo.get("ha_undo")

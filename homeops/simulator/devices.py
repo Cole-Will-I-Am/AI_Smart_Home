@@ -19,6 +19,11 @@ def inject_generator_fail(state: StateStore, entity_id: str) -> None:
     state.entity(entity_id).attributes["fail_start"] = True
 
 
+def inject_unresponsive(state: StateStore, entity_id: str) -> None:
+    """Device ACKs a command but never actually moves — the router's read-back must catch it."""
+    state.entity(entity_id).attributes["unresponsive"] = True
+
+
 def clear_faults(state: StateStore, entity_id: str) -> None:
-    for k in ("jam", "stall", "fail_start"):
+    for k in ("jam", "stall", "fail_start", "unresponsive"):
         state.entity(entity_id).attributes.pop(k, None)

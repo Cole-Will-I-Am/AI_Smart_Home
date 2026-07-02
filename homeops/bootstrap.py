@@ -11,6 +11,7 @@ from .audit import AuditLog
 from .simulator import HASim, NetSim
 from .adapters import SimAdapter
 from .router import CommandRouter
+from .health import HealthRegistry
 from . import automations
 
 DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "houses.example.yaml")
@@ -27,6 +28,7 @@ class World:
     audit: AuditLog
     adapter: SimAdapter
     router: CommandRouter
+    health: HealthRegistry
     notifications: list = field(default_factory=list)
 
     def tick(self, n: int = 1) -> None:
@@ -53,9 +55,13 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
     ha = HASim(state)
     net = NetSim(state)
     adapter = adapter or SimAdapter(ha, net)
-    router = CommandRouter(engine, state, adapter, audit)
+    health = HealthRegistry()
+    for h in houses.values():
+        for eid in h.entities:
+            health.heartbeat(eid, 0)   # seed: every device is responsive at boot
+    router = CommandRouter(engine, state, adapter, audit, health=health)
     world = World(houses=houses, state=state, bus=bus, ha=ha, net=net,
-                  engine=engine, audit=audit, adapter=adapter, router=router)
+                  engine=engine, audit=audit, adapter=adapter, router=router, health=health)
     if register_automations:
         automations.register(world)
     return world
