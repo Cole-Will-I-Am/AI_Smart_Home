@@ -46,6 +46,14 @@ class CommandRouter:
         if operator.kind == "guest" and level > 1:
             return self._audit(intent, operator, "refused", "guest operator limited to Level 1", level)
 
+        # RBAC: property scope + role capability cap (identity.py)
+        if operator.houses != "*" and intent.house_id not in operator.houses:
+            return self._audit(intent, operator, "refused",
+                               f"property {intent.house_id} is out of scope for operator {operator.name}", level)
+        if operator.max_level is not None and level > operator.max_level:
+            return self._audit(intent, operator, "refused",
+                               f"action level L{level} exceeds operator role (max L{operator.max_level})", level)
+
         # cross-house guard
         if intent.house_id != operator.active_house and not intent.confirm_cross_house:
             return self._audit(intent, operator, "confirm_required",

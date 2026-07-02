@@ -73,6 +73,8 @@ class Operator:
     kind: str            # owner | ai | system | guest
     active_house: str
     name: str = ""
+    max_level: int | None = None   # role cap (None = uncapped); set via identity.operator_for
+    houses: object = "*"           # property scope: "*" or a set of house ids this operator may touch
 
 
 @dataclass

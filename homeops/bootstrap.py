@@ -12,6 +12,7 @@ from .simulator import HASim, NetSim
 from .adapters import SimAdapter
 from .router import CommandRouter
 from .health import HealthRegistry
+from .identity import IdentityStore
 from . import automations
 
 DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "houses.example.yaml")
@@ -29,6 +30,7 @@ class World:
     adapter: SimAdapter
     router: CommandRouter
     health: HealthRegistry
+    identity: IdentityStore
     notifications: list = field(default_factory=list)
 
     def tick(self, n: int = 1) -> None:
@@ -60,8 +62,9 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
         for eid in h.entities:
             health.heartbeat(eid, 0)   # seed: every device is responsive at boot
     router = CommandRouter(engine, state, adapter, audit, health=health)
+    identity = IdentityStore()
     world = World(houses=houses, state=state, bus=bus, ha=ha, net=net,
-                  engine=engine, audit=audit, adapter=adapter, router=router, health=health)
+                  engine=engine, audit=audit, adapter=adapter, router=router, health=health, identity=identity)
     if register_automations:
         automations.register(world)
     return world
