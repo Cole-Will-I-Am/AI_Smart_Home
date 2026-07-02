@@ -9,14 +9,21 @@ from homeops.adapters.base import Adapter
 
 
 class FakeTransport:
-    """Records requests; returns canned (status, text) by (method, url-substring)."""
-    def __init__(self, responses=None):
+    """Records requests; returns canned (status, text) by (method, url-substring).
+
+    `get_states` (optional): a queue of states returned by successive GET /api/states/ calls, so a
+    test can give a different prior-state and post-actuation-verification-state read."""
+    def __init__(self, responses=None, get_states=None):
         self.calls = []
         self.responses = responses or {}
+        self.get_states = list(get_states) if get_states is not None else None
 
     def __call__(self, method, url, headers, body):
         self.calls.append({"method": method, "url": url, "headers": headers,
                            "body": json.loads(body) if body else None})
+        if method == "GET" and "/api/states/" in url and self.get_states is not None:
+            st = self.get_states.pop(0) if self.get_states else "unknown"
+            return 200, json.dumps({"state": st})
         for (m, sub), (status, text) in self.responses.items():
             if m == method and sub in url:
                 return status, text
@@ -47,13 +54,41 @@ def test_ha_light_turn_on_and_undo():
 
 
 def test_ha_entity_map_and_lock_reversible():
-    tr = FakeTransport(_state("locked"))
+    # prior read = "locked" (so undo re-locks); post-verification read = "unlocked" (command confirmed)
+    tr = FakeTransport(get_states=["locked", "unlocked"])
     ha = HomeAssistantAdapter("http://ha:8123", "T", transport=tr,
                               entity_map={"house_a.lock.front_door": "lock.front_a"})
     res = ha.apply(Intent("house_a", "lock", "front_door", "unlock"))
+    assert res["ok"]
     call = tr.posts("/api/services/lock/unlock")[0]
     assert call["body"]["entity_id"] == "lock.front_a"        # mapped, not the default lock.front_door
     assert res["undo"]["ha_undo"]["service"] == "lock"        # prior locked -> re-lock on undo
+
+
+def test_ha_safety_action_verified_and_unverified():
+    # valve reports "closed" after close_valve -> executed
+    ok_tr = FakeTransport(get_states=["open", "closed"])
+    ha = HomeAssistantAdapter("http://ha:8123", "T", transport=ok_tr)
+    assert ha.apply(Intent("house_a", "water", "main_valve", "shutoff_main"))["ok"]
+    # valve still "open" after close_valve -> NOT executed (HTTP 200 is not proof it actuated)
+    bad_tr = FakeTransport(get_states=["open", "open"])
+    ha2 = HomeAssistantAdapter("http://ha:8123", "T", transport=bad_tr)
+    res = ha2.apply(Intent("house_a", "water", "main_valve", "shutoff_main"))
+    assert not res["ok"] and "UNVERIFIED" in res["message"]
+
+
+def test_ha_adapter_is_fail_closed_on_unknown_action():
+    # unlock_unknown (L4, blocked by the router) must NOT map to lock.unlock at the adapter either
+    ha = HomeAssistantAdapter("http://ha:8123", "T", transport=FakeTransport())
+    res = ha.apply(Intent("house_a", "lock", "front_door", "unlock_unknown"))
+    assert not res["ok"]
+
+
+def test_ha_strict_entity_map_refuses_unmapped():
+    ha = HomeAssistantAdapter("http://ha:8123", "T", transport=FakeTransport(get_states=["off"]),
+                              strict_entity_map=True)   # no entity_map provided
+    res = ha.apply(Intent("house_a", "light", "living_room", "turn_on"))
+    assert not res["ok"] and "strict" in res["message"]
 
 
 def test_ha_set_temperature_carries_data_and_is_not_reversible():

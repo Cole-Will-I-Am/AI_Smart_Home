@@ -41,10 +41,12 @@ class OpsLayer:
                                    Operator("ai", active_house, "ai-ops"))
             return {"status": r.status, "message": r.message}
         if name == "propose_command":
+            # Note: the AI cannot set confirm_cross_house or confirm_token — a human must confirm
+            # cross-house and L2+ actions. Cross-house proposals from the AI return confirm_required.
             intent = Intent(
                 house_id=args.get("house_id", active_house),
                 subsystem=args["subsystem"], target=args["target"], action=args["action"],
-                args=args.get("args", {}) or {}, confirm_cross_house=bool(args.get("confirm_cross_house")),
+                args=args.get("args", {}) or {},
             )
             r = w.router.execute(intent, Operator("ai", active_house, "ai-ops"))
             return {"status": r.status, "message": r.message, "level": r.level}

@@ -5,13 +5,17 @@ house-namespaced entity id (e.g. `house_a.lock.front_door`). `manual_override` m
 physical control that always works regardless of the engine/AI/power state.
 """
 from __future__ import annotations
-from typing import Any
+from typing import Any, Callable
 from .model import House, Entity
+from .audit import AuditLog, AuditRecord
 
 
 class StateStore:
-    def __init__(self, houses: dict[str, House]) -> None:
+    def __init__(self, houses: dict[str, House], audit: AuditLog | None = None,
+                 clock: Callable[[], int] | None = None) -> None:
         self.houses = houses
+        self.audit = audit           # if set, manual overrides are recorded (audit completeness)
+        self.clock = clock or (lambda: 0)
 
     def entity(self, entity_id: str) -> Entity | None:
         hid = entity_id.split(".", 1)[0]
@@ -30,12 +34,19 @@ class StateStore:
         e.attributes.update(attrs)
 
     def manual_override(self, entity_id: str, state: Any) -> None:
-        """Physical override: always succeeds, bypasses the engine entirely."""
+        """Physical override: always succeeds, bypasses the engine entirely — and is audited."""
         e = self.entity(entity_id)
         if not e:
             raise KeyError(entity_id)
         e.state = state
         e.attributes["manual"] = True
+        if self.audit:
+            parts = entity_id.split(".")
+            self.audit.record(AuditRecord(
+                tick=self.clock(), operator="human", house_id=parts[0],
+                subsystem=parts[1] if len(parts) > 1 else "?", target=parts[2] if len(parts) > 2 else "?",
+                action="manual_override", args={"state": state}, level=None,
+                status="manual_override", message=f"physical override -> {state}"))
 
     def house(self, house_id: str) -> House:
         return self.houses[house_id]

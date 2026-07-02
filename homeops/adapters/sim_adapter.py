@@ -20,4 +20,6 @@ class SimAdapter(Adapter):
             house_id, mac, vlan = undo["net_restore"]
             self.net.inventory[house_id][mac] = vlan
         elif "entity_id" in undo:
+            # cancel any scheduled transition first, or it would clobber the restored state later
+            self.ha.cancel_pending(undo["entity_id"])
             self.ha.state.set_state(undo["entity_id"], undo["state"])

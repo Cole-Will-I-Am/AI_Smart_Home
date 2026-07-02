@@ -1,8 +1,10 @@
-"""Immutable audit log + rollback registry.
+"""Append-only audit log + rollback registry.
 
-Every command attempt — executed, refused, prohibited, recommended — is recorded. This is
-the evidence trail the DESIGN.md permission model promises: "L4/L5 refused via AI path,
-and logged".
+Every command attempt — executed, refused, prohibited, recommended — plus rollbacks and manual
+overrides is recorded. This is the evidence trail the DESIGN.md permission model promises
+("L4/L5 refused via AI path, and logged"). NOTE: this reference implementation keeps records in
+an in-memory list; a production build persists them to a tamper-evident/append-only store
+(e.g. WORM storage or a hash-chained log). It is "append-only" by convention here, not enforced.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field, asdict

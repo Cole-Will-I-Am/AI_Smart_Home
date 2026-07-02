@@ -115,6 +115,34 @@ start_event_bridge(world)   # HA state_changed -> the same local-first automatio
 Both are unit-tested offline against a fake HTTP transport and a fake WebSocket connection
 (`tests/test_real_adapters.py`), so no live services or extra deps are needed to run the suite.
 
+### Hardening from external review
+
+The permission model was adversarially reviewed (by a different LLM) and hardened; each fix has
+a regression test in `tests/test_hardening.py`:
+
+- The AI can no longer self-confirm cross-house actions (the `confirm_cross_house` flag was removed
+  from the AI tool surface — a human must confirm).
+- Confirmation tokens are now unguessable (`secrets`) and bound to the **full intent (including
+  args) and the operator identity** — a token can't be reused with different args or by a different
+  operator.
+- The leak "two-signal" rule re-reads **both independent state channels** (wet sensor AND abnormal
+  flow) at actuation time; a spoofed or stale `leak` event no longer closes the valve.
+- Rollback cancels pending physical transitions (an undone valve close won't sneak to "closed" two
+  ticks later).
+- The real HA adapter **verifies safety-impacting actions** by reading device state back — HTTP 200
+  is not treated as proof a valve closed or a lock threw.
+- The AI fallback runs as an AI-limited operator, never silently as `owner`.
+- Adapter action mappings are **fail-closed** (a stray `unlock_unknown` can't become `lock.unlock`),
+  OPNsense checks every mutating call, and rollbacks + manual overrides are now audited.
+- `build_real_world(strict_entity_map=True)` **fails startup** if any controllable entity lacks an
+  explicit HA mapping — preventing House A and House B from collapsing onto the same real entities.
+
+> **Deployment caveat (by design, not a bug):** in this reference implementation the local-first
+> automations run in the Python event bus. A production deployment should ALSO express the
+> life-safety subset (leak, fire/CO, freeze) as **native Home Assistant / Node-RED automations** so
+> they keep running even if this Python process dies. The Python layer is the AI-coordination and
+> validation tier; it is not the last line of defense.
+
 ## Reference stack (local-first)
 
 Home Assistant OS cores (primary + cold spare per house) · Mosquitto MQTT · Zigbee2MQTT ·

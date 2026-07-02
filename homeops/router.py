@@ -54,12 +54,13 @@ class CommandRouter:
         if operator.kind == "ai" and level >= 2:
             needs_confirm = True   # AI's L2+ control is conditioned on a human confirmation
         if needs_confirm:
-            authorized = (operator.kind == "system" and intent.emergency) or eng.check_token(intent)
+            authorized = (operator.kind == "system" and intent.emergency) or eng.check_token(intent, operator)
             if not authorized:
                 # The AI cannot self-confirm — a human must. So it gets no usable token,
                 # only the signal that human confirmation is required. Interactive operators
-                # (owner) receive a single-use token to re-submit with.
-                tok = None if operator.kind == "ai" else eng.issue_token(intent)
+                # (owner) receive a single-use, unguessable token bound to this exact intent
+                # (including args) AND to their operator identity.
+                tok = None if operator.kind == "ai" else eng.issue_token(intent, operator)
                 return self._audit(intent, operator, "confirm_required",
                                    f"confirmation required for {intent.subsystem}.{intent.action}", level, ctoken=tok)
 
@@ -72,6 +73,9 @@ class CommandRouter:
 
         if not eng.allow_rate(intent):
             return self._audit(intent, operator, "refused", "rate limited", level)
+        if not eng.allow_cooldown(intent):
+            return self._audit(intent, operator, "refused",
+                               f"cooldown: {intent.subsystem}.{intent.action} actuated too recently", level)
 
         res = self.adapter.apply(intent)
         if not res.get("ok"):
@@ -89,9 +93,16 @@ class CommandRouter:
             operator, "recommended", message, level,
         )
 
-    def rollback(self, token: str) -> bool:
+    def rollback(self, token: str, operator: Operator | None = None) -> bool:
         undo = self.audit.rollback(token)
-        if undo is None:
-            return False
-        self.adapter.undo(undo)
-        return True
+        ok = undo is not None
+        if ok:
+            self.adapter.undo(undo)
+        self.audit.record(AuditRecord(
+            tick=self.engine.tick, operator=(operator.kind if operator else "system"),
+            house_id="n/a", subsystem="advisory", target="rollback", action="rollback",
+            args={"token": token}, level=None,
+            status="rollback" if ok else "refused",
+            message="rollback applied" if ok else "rollback: unknown token",
+        ))
+        return ok

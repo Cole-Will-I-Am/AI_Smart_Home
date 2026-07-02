@@ -44,12 +44,12 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
     pass a real adapter (e.g. CompositeAdapter of HomeAssistantAdapter+OPNsenseAdapter) to drive
     actual hardware — nothing above the adapter layer changes."""
     houses = load_houses(config_path)
-    state = StateStore(houses)
+    engine = PermissionEngine()
+    audit = AuditLog()
+    state = StateStore(houses, audit=audit, clock=lambda: engine.tick)
     bus = EventBus()
     ha = HASim(state)
     net = NetSim(state)
-    engine = PermissionEngine()
-    audit = AuditLog()
     adapter = adapter or SimAdapter(ha, net)
     router = CommandRouter(engine, state, adapter, audit)
     world = World(houses=houses, state=state, bus=bus, ha=ha, net=net,
@@ -59,18 +59,42 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
     return world
 
 
+def controllable_entities(houses) -> list[str]:
+    """Entity ids that the HA adapter must be able to actuate (excludes observe-only sensors and
+    the network subsystem, which OPNsense handles)."""
+    out = []
+    for h in houses.values():
+        for e in h.entities.values():
+            if e.actions and e.subsystem not in ("network", "sensor"):
+                out.append(e.entity_id)
+    return out
+
+
 def build_real_world(ha_base_url: str, ha_token: str, opn_base_url: str, opn_key: str, opn_secret: str,
                      config_path: str = DEFAULT_CONFIG, entity_map: dict | None = None,
                      event_map: dict | None = None, verify_tls: bool = True,
-                     register_automations: bool = True) -> World:
+                     register_automations: bool = True, strict_entity_map: bool = True) -> World:
     """Wire a World to a live Home Assistant (REST commands + WS events) and OPNsense (REST).
 
     `entity_map`: homeops entity_id -> real HA entity_id. `event_map`: HA entity_id ->
     {"type","when","house_id","data"} for the WebSocket event bridge. Call `start_event_bridge(world)`
     to begin translating real sensor events into the local-first automations.
+
+    With `strict_entity_map=True` (default), startup FAILS if any controllable entity in either
+    house lacks an explicit HA mapping — this is what prevents House A and House B from silently
+    collapsing onto the same real HA entity (e.g. both -> `light.kitchen`).
     """
     from .adapters import HomeAssistantAdapter, OPNsenseAdapter, CompositeAdapter
-    ha_ad = HomeAssistantAdapter(ha_base_url, ha_token, verify_tls=verify_tls, entity_map=entity_map or {})
+    entity_map = entity_map or {}
+    if strict_entity_map:
+        houses = load_houses(config_path)
+        unmapped = [eid for eid in controllable_entities(houses) if eid not in entity_map]
+        if unmapped:
+            raise ValueError(
+                f"{len(unmapped)} controllable entities have no explicit HA mapping "
+                f"(two houses would collapse onto shared entities). Map them all, e.g.: {unmapped[:5]} ...")
+    ha_ad = HomeAssistantAdapter(ha_base_url, ha_token, verify_tls=verify_tls,
+                                 entity_map=entity_map, strict_entity_map=strict_entity_map)
     net_ad = OPNsenseAdapter(opn_base_url, opn_key, opn_secret, verify_tls=verify_tls)
     world = build_world(config_path, register_automations=register_automations,
                         adapter=CompositeAdapter(ha_ad, net_ad))

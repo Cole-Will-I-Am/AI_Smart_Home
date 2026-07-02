@@ -7,6 +7,9 @@ and never actuates. Confirmation tokens are single-use, house-scoped, and TTL-bo
 from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
+import hashlib
+import json
+import secrets
 
 # (subsystem, action) -> level.  0 Observe · 1 Routine · 2 Security/Utility · 3 Power/Infra · 4 Recommend-only · 5 Prohibited
 ACTION_LEVELS: dict[tuple[str, str], int] = {
@@ -38,6 +41,15 @@ CONFIRM_REQUIRED: set[tuple[str, str]] = {
     ("lock", "unlock"), ("alarm", "disarm"), ("garage", "open"),
     ("water", "shutoff_main"), ("power", "breaker_off"), ("generator", "start"),
     ("network", "firewall_policy"),
+}
+
+# Minimum ticks between repeats of a one-shot destructive actuation (rolling cooldown,
+# independent of the per-tick rate limiter).
+DESTRUCTIVE_COOLDOWN: dict[tuple[str, str], int] = {
+    ("water", "shutoff_main"): 3,
+    ("water", "open_main"): 3,
+    ("generator", "start"): 3,
+    ("power", "breaker_off"): 3,
 }
 
 
@@ -79,31 +91,36 @@ class Result:
 
 class PermissionEngine:
     def __init__(self, rate_limit: int = 5) -> None:
-        self._tokens: dict[str, tuple[str, int]] = {}   # token -> (intent-key, expiry_tick)
-        self._counter = 0
+        self._tokens: dict[str, tuple[str, int]] = {}   # token -> (intent+operator key, expiry_tick)
         self._rate_limit = rate_limit
         self._rate: dict[tuple[str, str], tuple[int, int]] = {}   # (house, subsystem) -> (tick, count)
+        self._last_action: dict[tuple[str, str, str, str], int] = {}   # cooldown tracker
         self.tick = 0
 
     def level(self, subsystem: str, action: str) -> int | None:
         return ACTION_LEVELS.get((subsystem, action))
 
-    # --- confirmation tokens -------------------------------------------------
-    def _key(self, intent: Intent) -> str:
-        return f"{intent.house_id}|{intent.subsystem}|{intent.target}|{intent.action}"
+    # --- confirmation tokens (cryptographic; bound to full intent + operator) ---
+    def _key(self, intent: Intent, operator: "Operator") -> str:
+        payload = {
+            "house": intent.house_id, "subsystem": intent.subsystem, "target": intent.target,
+            "action": intent.action, "args": intent.args,
+            "op_kind": operator.kind, "op_name": operator.name, "op_house": operator.active_house,
+        }
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
-    def issue_token(self, intent: Intent, ttl: int = 5) -> str:
-        self._counter += 1
-        tok = f"tok-{self._counter}"
-        self._tokens[tok] = (self._key(intent), self.tick + ttl)
+    def issue_token(self, intent: Intent, operator: "Operator", ttl: int = 5) -> str:
+        tok = secrets.token_urlsafe(16)   # unguessable
+        self._tokens[tok] = (self._key(intent, operator), self.tick + ttl)
         return tok
 
-    def check_token(self, intent: Intent) -> bool:
+    def check_token(self, intent: Intent, operator: "Operator") -> bool:
         tok = intent.confirm_token
         if not tok or tok not in self._tokens:
             return False
         key, expiry = self._tokens[tok]
-        if key != self._key(intent) or self.tick > expiry:
+        # bound to the EXACT intent (incl. args) AND the same operator, and not expired
+        if key != self._key(intent, operator) or self.tick > expiry:
             return False
         del self._tokens[tok]   # single-use
         return True
@@ -117,4 +134,15 @@ class PermissionEngine:
         if count >= self._rate_limit:
             return False
         self._rate[k] = (self.tick, count + 1)
+        return True
+
+    def allow_cooldown(self, intent: Intent) -> bool:
+        cd = DESTRUCTIVE_COOLDOWN.get((intent.subsystem, intent.action))
+        if not cd:
+            return True
+        k = (intent.house_id, intent.subsystem, intent.target, intent.action)
+        last = self._last_action.get(k)
+        if last is not None and self.tick - last < cd:
+            return False
+        self._last_action[k] = self.tick
         return True

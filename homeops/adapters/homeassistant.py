@@ -22,6 +22,14 @@ from ..events import Event, EventBus
 # Reversible HA domains: prior state maps cleanly to an inverse service.
 _REVERSIBLE = {"light", "switch", "lock", "cover", "valve", "alarm_control_panel"}
 
+# Safety-impacting (domain, service) -> the state the device MUST reach for the command to
+# count as executed. These get post-actuation verification (read-back) so "executed" means
+# "confirmed", not merely "HTTP 200".
+_VERIFY_EXPECT = {
+    ("lock", "lock"): "locked", ("lock", "unlock"): "unlocked",
+    ("valve", "close_valve"): "closed", ("valve", "open_valve"): "open",
+}
+
 
 def map_intent(intent: Intent, announce_service: tuple[str, str] = ("notify", "notify")) -> tuple[str, str, dict] | None:
     """(subsystem, action) -> (ha_domain, ha_service, service_data). None if unmapped."""
@@ -34,7 +42,11 @@ def map_intent(intent: Intent, announce_service: tuple[str, str] = ("notify", "n
         if a == "set_brightness":
             return "light", "turn_on", {"brightness_pct": args.get("brightness", 50)}
     if s == "plug":
-        return "switch", "turn_on" if a == "turn_on" else "turn_off", {}
+        if a == "turn_on":
+            return "switch", "turn_on", {}
+        if a == "turn_off":
+            return "switch", "turn_off", {}
+        return None
     if s == "climate":
         if a == "set_temperature":
             return "climate", "set_temperature", {"temperature": args.get("temperature")}
@@ -52,9 +64,19 @@ def map_intent(intent: Intent, announce_service: tuple[str, str] = ("notify", "n
         if a == "set_position":
             return "cover", "set_cover_position", {"position": args.get("position", 50)}
     if s == "garage":
-        return "cover", "open_cover" if a == "open" else "close_cover", {}
+        if a == "open":
+            return "cover", "open_cover", {}
+        if a == "close":
+            return "cover", "close_cover", {}
+        return None
     if s == "lock":
-        return "lock", "lock" if a == "lock" else "unlock", {}
+        # fail-closed: ONLY the explicit lock/unlock actions map. A stray/virtual action such as
+        # "unlock_unknown" (which the router blocks as L4) must not silently become lock.unlock here.
+        if a == "lock":
+            return "lock", "lock", {}
+        if a == "unlock":
+            return "lock", "unlock", {}
+        return None
     if s == "speaker" and a == "announce":
         return announce_service[0], announce_service[1], {"message": args.get("message", "")}
     if s == "camera":
@@ -93,7 +115,8 @@ class HomeAssistantAdapter(Adapter):
     def __init__(self, base_url: str, token: str, transport: Transport | None = None, verify_tls: bool = True,
                  entity_map: dict[str, str] | None = None,
                  service_overrides: dict[tuple[str, str], tuple[str, str, dict]] | None = None,
-                 announce_service: tuple[str, str] = ("notify", "notify")) -> None:
+                 announce_service: tuple[str, str] = ("notify", "notify"),
+                 strict_entity_map: bool = False, verify_safety: bool = True) -> None:
         self.token = token
         self.verify_tls = verify_tls
         self.http = HttpClient(base_url, default_headers={"Authorization": f"Bearer {token}"},
@@ -101,6 +124,10 @@ class HomeAssistantAdapter(Adapter):
         self.entity_map = entity_map or {}
         self.overrides = service_overrides or {}
         self.announce = announce_service
+        # strict_entity_map: never fall back to a house-stripped f"{domain}.{target}" — fail closed
+        # so House A and House B can't collapse onto the same real HA entity.
+        self.strict_entity_map = strict_entity_map
+        self.verify_safety = verify_safety
         self.ws_url = base_url.replace("http", "ws", 1).rstrip("/") + "/api/websocket"
 
     # --- REST command side ---------------------------------------------------
@@ -109,7 +136,10 @@ class HomeAssistantAdapter(Adapter):
         if not m:
             return None
         domain, service, data = m
-        ha_entity = self.entity_map.get(intent.entity_id) or f"{domain}.{intent.target}"
+        mapped = self.entity_map.get(intent.entity_id)
+        if mapped is None and self.strict_entity_map:
+            return None   # fail closed — no house-stripped fallback
+        ha_entity = mapped or f"{domain}.{intent.target}"
         return domain, service, dict(data), ha_entity
 
     def _get_state(self, ha_entity: str) -> dict | None:
@@ -141,7 +171,9 @@ class HomeAssistantAdapter(Adapter):
     def apply(self, intent: Intent) -> dict:
         r = self._resolve(intent)
         if not r:
-            return {"ok": False, "message": f"no HA mapping for {intent.subsystem}.{intent.action}"}
+            reason = "unmapped entity (strict)" if self.strict_entity_map and intent.entity_id not in self.entity_map \
+                else "no HA mapping"
+            return {"ok": False, "message": f"{reason} for {intent.subsystem}.{intent.action} ({intent.entity_id})"}
         domain, service, data, ha_entity = r
         prior = self._get_state(ha_entity)
         undo = self._undo_for(domain, ha_entity, prior)
@@ -150,6 +182,16 @@ class HomeAssistantAdapter(Adapter):
         status, _ = self.http.request("POST", f"/api/services/{domain}/{service}", json_body=body)
         if status >= 300:
             return {"ok": False, "message": f"HA {domain}.{service} -> HTTP {status}"}
+        # Post-actuation verification for safety-impacting actions: HTTP 200 is not proof the
+        # physical device moved. Read the state back and require it to be what we commanded.
+        expect = _VERIFY_EXPECT.get((domain, service))
+        if self.verify_safety and expect is not None:
+            after = self._get_state(ha_entity)
+            actual = after.get("state") if after else None
+            if actual != expect:
+                return {"ok": False,
+                        "message": f"HA {domain}.{service} {ha_entity} UNVERIFIED (state={actual!r}, expected {expect!r})",
+                        "undo": None}
         return {"ok": True, "message": f"HA {domain}.{service} {ha_entity}", "undo": undo}
 
     def undo(self, undo: dict) -> None:

@@ -23,6 +23,11 @@ class HASim:
     def _schedule(self, delay: int, entity_id: str, new_state) -> None:
         self._pending.append({"resolve": self.tick_n + delay, "entity_id": entity_id, "state": new_state})
 
+    def cancel_pending(self, entity_id: str) -> None:
+        """Drop any scheduled future transition for an entity — used by rollback so an undone
+        action does not have its pending physical transition fire two ticks later."""
+        self._pending = [p for p in self._pending if p["entity_id"] != entity_id]
+
     def tick(self) -> None:
         self.tick_n += 1
         due = [p for p in self._pending if p["resolve"] <= self.tick_n]

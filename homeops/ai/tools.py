@@ -36,7 +36,6 @@ TOOLS = [
                 "target": {"type": "string", "description": "device name, e.g. front_door, main_valve, thermostat_main"},
                 "action": {"type": "string", "description": "e.g. turn_on, set_temperature, lock, unlock, arm, quarantine, shutoff_main"},
                 "args": {"type": "object", "description": "action arguments, e.g. {\"temperature\": 68}"},
-                "confirm_cross_house": {"type": "boolean", "description": "set true only when a human has confirmed acting on a non-active house"},
             },
             "required": ["house_id", "subsystem", "target", "action"],
         },

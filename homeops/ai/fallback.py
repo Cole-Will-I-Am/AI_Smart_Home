@@ -10,7 +10,10 @@ from ..permissions import Intent, Operator
 
 
 def deterministic_response(world, goal: str, active_house: str) -> dict:
-    op = Operator(kind="owner", active_house=active_house, name="local-fallback")
+    # Runs as an AI-limited operator, NOT owner — the AI layer must never silently elevate
+    # authority when it degrades to fallback. L2+ goals therefore return confirm_required
+    # (a human must confirm), exactly as on the online AI path.
+    op = Operator(kind="ai", active_house=active_house, name="local-fallback")
     g = goal.lower()
     actions = []
     if "arm" in g and "night" in g:

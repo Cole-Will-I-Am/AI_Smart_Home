@@ -31,18 +31,23 @@ class OPNsenseAdapter(Adapter):
                 return {"ok": False, "message": "quarantine needs an ip or mac in args"}
             status, _ = self.http.request("POST", f"/api/firewall/alias_util/add/{self.alias}",
                                           json_body={"address": addr})
-            self.http.request("POST", "/api/firewall/alias/reconfigure", json_body={})
             if status >= 300:
                 return {"ok": False, "message": f"alias add -> HTTP {status}"}
+            # a successful alias add is meaningless until reconfigure applies it — check it too
+            rc_status, _ = self.http.request("POST", "/api/firewall/alias/reconfigure", json_body={})
+            if rc_status >= 300:
+                return {"ok": False, "message": f"alias reconfigure -> HTTP {rc_status} (quarantine NOT active)"}
             return {"ok": True, "message": f"quarantined {addr} to alias '{self.alias}'",
                     "undo": {"opn_del": addr}}
         if a == "firewall_policy":
             rule = args.get("rule") or {"action": "block", "description": args.get("description", "ai-policy")}
             status, _ = self.http.request("POST", "/api/firewall/filter/addRule", json_body=rule)
-            self.http.request("POST", "/api/firewall/filter/apply", json_body={})
             if status >= 300:
                 return {"ok": False, "message": f"addRule -> HTTP {status}"}
-            return {"ok": True, "message": "firewall rule added", "undo": None}
+            ap_status, _ = self.http.request("POST", "/api/firewall/filter/apply", json_body={})
+            if ap_status >= 300:
+                return {"ok": False, "message": f"filter apply -> HTTP {ap_status} (rule NOT active)"}
+            return {"ok": True, "message": "firewall rule added and applied", "undo": None}
         return {"ok": False, "message": f"unhandled network.{a}"}
 
     def undo(self, undo: dict) -> None:

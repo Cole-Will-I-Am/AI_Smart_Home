@@ -32,9 +32,13 @@ def render_snapshot(world, active_house: str) -> str:
     for hid, house in world.houses.items():
         lines.append(f"[{hid}] alias={house.alias} mode={house.mode} wan_up={house.wan_up} "
                      f"grid_up={house.grid_up} ai_hold={house.ai_hold}")
-        for sub in ("lock", "alarm", "water", "power", "battery", "generator", "sensor", "light"):
+        # Show safety-relevant subsystems in FULL (no truncation — hiding state from the AI is a
+        # safety risk); cap only the high-count cosmetic subsystems.
+        full = {"lock", "alarm", "water", "power", "battery", "generator", "hvac"}
+        for sub in ("lock", "alarm", "water", "power", "battery", "generator", "hvac", "sensor", "light"):
             ents = [e for e in house.entities.values() if e.subsystem == sub]
-            shown = ", ".join(f"{e.name}={e.state}" for e in ents[:6])
+            cap = None if sub in full else 8
+            shown = ", ".join(f"{e.name}={e.state}" for e in (ents if cap is None else ents[:cap]))
             if shown:
                 lines.append(f"  {sub}: {shown}")
     return "\n".join(lines)

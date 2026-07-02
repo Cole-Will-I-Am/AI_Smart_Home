@@ -27,10 +27,16 @@ def register(world) -> None:
     def on_event(ev: Event) -> None:
         h = ev.house_id
 
-        # 1. Water leak — two-signal shutoff (leak sensor AND abnormal flow)
-        if ev.type == "leak" and ev.data.get("flow", 0) >= ABNORMAL_FLOW:
-            do(h, "water", "main_valve", "shutoff_main", emergency=True)
-            world.notify(h, "Leak: main water shutting off", urgent=True)
+        # 1. Water leak — TRUE two-signal shutoff: re-read BOTH independent channels from the
+        #    state store at actuation time (a wet leak sensor AND an abnormal flow reading).
+        #    The event payload alone is never trusted — a spoofed/stale event won't close the valve.
+        if ev.type == "leak":
+            sensor_wet = bool(ev.entity_id) and world.state.get_state(ev.entity_id) == "wet"
+            flow = world.state.get_state(f"{h}.sensor.flow_meter")
+            flow_abnormal = flow is not None and float(flow) >= ABNORMAL_FLOW
+            if sensor_wet and flow_abnormal:
+                do(h, "water", "main_valve", "shutoff_main", emergency=True)
+                world.notify(h, "Leak confirmed (wet sensor + abnormal flow): main water shutting off", urgent=True)
 
         # 2. Unknown device joins the network -> quarantine
         elif ev.type == "network_join":
