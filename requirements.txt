@@ -3,3 +3,7 @@ pytest>=7.0
 # Optional — only needed for a LIVE Claude ops-layer run (pytest -m live).
 # The offline tests and the simulator do not import it.
 anthropic>=0.40
+# Optional — only needed for the live Home Assistant WebSocket event bridge
+# (real-adapter REST commands are stdlib-only; the offline tests need neither).
+websocket-client>=1.6
+

@@ -1,0 +1,196 @@
+"""Real Home Assistant adapter — REST for commands, WebSocket for the live event feed.
+
+`apply()` maps a homeops Intent (subsystem/action/target) to an HA domain/service/entity and
+POSTs `/api/services/<domain>/<service>`; `undo()` re-issues the inverse service for the
+reversible subset (on/off, lock, cover, valve, alarm). `run_event_bridge()` connects the HA
+WebSocket API, subscribes to `state_changed`, and translates configured entity changes into
+homeops `Event`s — so the SAME local-first automations fire on real sensors.
+
+The permission engine still gates everything upstream; this adapter only actuates approved,
+already-validated intents.
+"""
+from __future__ import annotations
+import json
+import ssl
+from typing import Any, Callable
+
+from .base import Adapter
+from .http import HttpClient, Transport
+from ..permissions import Intent
+from ..events import Event, EventBus
+
+# Reversible HA domains: prior state maps cleanly to an inverse service.
+_REVERSIBLE = {"light", "switch", "lock", "cover", "valve", "alarm_control_panel"}
+
+
+def map_intent(intent: Intent, announce_service: tuple[str, str] = ("notify", "notify")) -> tuple[str, str, dict] | None:
+    """(subsystem, action) -> (ha_domain, ha_service, service_data). None if unmapped."""
+    s, a, args = intent.subsystem, intent.action, intent.args
+    if s == "light":
+        if a == "turn_on":
+            return "light", "turn_on", {}
+        if a == "turn_off":
+            return "light", "turn_off", {}
+        if a == "set_brightness":
+            return "light", "turn_on", {"brightness_pct": args.get("brightness", 50)}
+    if s == "plug":
+        return "switch", "turn_on" if a == "turn_on" else "turn_off", {}
+    if s == "climate":
+        if a == "set_temperature":
+            return "climate", "set_temperature", {"temperature": args.get("temperature")}
+        if a == "set_fan":
+            return "climate", "set_fan_mode", {"fan_mode": args.get("value", "auto")}
+        if a == "set_mode":
+            return "climate", "set_hvac_mode", {"hvac_mode": args.get("value", "heat")}
+    if s == "hvac" and a == "emergency_shutoff":
+        return "climate", "set_hvac_mode", {"hvac_mode": "off"}
+    if s == "cover":
+        if a == "open":
+            return "cover", "open_cover", {}
+        if a == "close":
+            return "cover", "close_cover", {}
+        if a == "set_position":
+            return "cover", "set_cover_position", {"position": args.get("position", 50)}
+    if s == "garage":
+        return "cover", "open_cover" if a == "open" else "close_cover", {}
+    if s == "lock":
+        return "lock", "lock" if a == "lock" else "unlock", {}
+    if s == "speaker" and a == "announce":
+        return announce_service[0], announce_service[1], {"message": args.get("message", "")}
+    if s == "camera":
+        if a == "snapshot":
+            return "camera", "snapshot", {"filename": args.get("filename", "/config/www/snapshot.jpg")}
+        return None   # recording-mode/export is integration-specific; use service_overrides
+    if s == "water":
+        if a == "shutoff_main":
+            return "valve", "close_valve", {}
+        if a == "open_main":
+            return "valve", "open_valve", {}
+        if a in ("irrigation_on", "irrigation_off"):
+            return "switch", "turn_on" if a.endswith("on") else "turn_off", {}
+    if s == "power":
+        if a in ("breaker_on", "breaker_off"):
+            return "switch", "turn_on" if a.endswith("on") else "turn_off", {}
+        if a == "load_shed":
+            return "scene", "turn_on", {}   # a "load_shed" scene on the smart panel
+    if s == "evcharger" and a == "set_limit":
+        return "number", "set_value", {"value": args.get("amps", 16)}
+    if s == "battery" and a == "set_mode":
+        return "select", "select_option", {"option": args.get("mode", "backup")}
+    if s == "generator" and a == "start":
+        return "button", "press", {}
+    if s == "alarm":
+        if a == "arm":
+            return "alarm_control_panel", "alarm_arm_" + args.get("mode", "home"), {}
+        if a == "disarm":
+            return "alarm_control_panel", "alarm_disarm", {}
+        if a == "escalate":
+            return "script", "turn_on", {}
+    return None
+
+
+class HomeAssistantAdapter(Adapter):
+    def __init__(self, base_url: str, token: str, transport: Transport | None = None, verify_tls: bool = True,
+                 entity_map: dict[str, str] | None = None,
+                 service_overrides: dict[tuple[str, str], tuple[str, str, dict]] | None = None,
+                 announce_service: tuple[str, str] = ("notify", "notify")) -> None:
+        self.token = token
+        self.verify_tls = verify_tls
+        self.http = HttpClient(base_url, default_headers={"Authorization": f"Bearer {token}"},
+                               transport=transport, verify_tls=verify_tls)
+        self.entity_map = entity_map or {}
+        self.overrides = service_overrides or {}
+        self.announce = announce_service
+        self.ws_url = base_url.replace("http", "ws", 1).rstrip("/") + "/api/websocket"
+
+    # --- REST command side ---------------------------------------------------
+    def _resolve(self, intent: Intent):
+        m = self.overrides.get((intent.subsystem, intent.action)) or map_intent(intent, self.announce)
+        if not m:
+            return None
+        domain, service, data = m
+        ha_entity = self.entity_map.get(intent.entity_id) or f"{domain}.{intent.target}"
+        return domain, service, dict(data), ha_entity
+
+    def _get_state(self, ha_entity: str) -> dict | None:
+        _, obj = self.http.request("GET", f"/api/states/{ha_entity}")
+        return obj if isinstance(obj, dict) else None
+
+    def _undo_for(self, domain: str, ha_entity: str, prior: dict | None) -> dict | None:
+        if not prior or domain not in _REVERSIBLE:
+            return None
+        ps = prior.get("state")
+        inv = None
+        if domain in ("light", "switch"):
+            inv = "turn_on" if ps == "on" else "turn_off"
+        elif domain == "lock":
+            inv = "lock" if ps == "locked" else "unlock"
+        elif domain == "cover":
+            inv = "open_cover" if ps in ("open", "opening") else "close_cover"
+        elif domain == "valve":
+            inv = "open_valve" if ps in ("open", "opening") else "close_valve"
+        elif domain == "alarm_control_panel":
+            if ps == "disarmed":
+                inv = "alarm_disarm"
+            elif isinstance(ps, str) and ps.startswith("armed_"):
+                inv = "alarm_arm_" + ps[len("armed_"):]
+        if not inv:
+            return None
+        return {"ha_undo": {"domain": domain, "service": inv, "entity_id": ha_entity}}
+
+    def apply(self, intent: Intent) -> dict:
+        r = self._resolve(intent)
+        if not r:
+            return {"ok": False, "message": f"no HA mapping for {intent.subsystem}.{intent.action}"}
+        domain, service, data, ha_entity = r
+        prior = self._get_state(ha_entity)
+        undo = self._undo_for(domain, ha_entity, prior)
+        body = {"entity_id": ha_entity}
+        body.update({k: v for k, v in data.items() if v is not None})
+        status, _ = self.http.request("POST", f"/api/services/{domain}/{service}", json_body=body)
+        if status >= 300:
+            return {"ok": False, "message": f"HA {domain}.{service} -> HTTP {status}"}
+        return {"ok": True, "message": f"HA {domain}.{service} {ha_entity}", "undo": undo}
+
+    def undo(self, undo: dict) -> None:
+        u = undo.get("ha_undo")
+        if u:
+            self.http.request("POST", f"/api/services/{u['domain']}/{u['service']}",
+                              json_body={"entity_id": u["entity_id"]})
+
+    # --- WebSocket event side ------------------------------------------------
+    def _default_ws_connect(self):
+        try:
+            from websocket import create_connection   # optional dep: pip install websocket-client
+        except ImportError as e:  # pragma: no cover - only hit at runtime without the dep
+            raise RuntimeError("HA event bridge needs `pip install websocket-client`") from e
+        sslopt = {"cert_reqs": ssl.CERT_NONE} if not self.verify_tls else None
+        return create_connection(self.ws_url, sslopt=sslopt)
+
+    def run_event_bridge(self, bus: EventBus, event_map: dict[str, dict],
+                         connect: Callable[[], Any] | None = None) -> None:
+        """Subscribe to HA state_changed and publish mapped events onto the bus.
+
+        `event_map`: {ha_entity_id: {"type": "leak", "when": "on", "house_id": "house_a", "data": {...}}}
+        Blocks until the connection closes (recv() returns None). Run in a thread in production.
+        """
+        conn = connect() if connect else self._default_ws_connect()
+        conn.recv()   # {"type":"auth_required"}
+        conn.send(json.dumps({"type": "auth", "access_token": self.token}))
+        conn.recv()   # {"type":"auth_ok"}
+        conn.send(json.dumps({"id": 1, "type": "subscribe_events", "event_type": "state_changed"}))
+        conn.recv()   # {"id":1,"type":"result","success":true}
+        while True:
+            raw = conn.recv()
+            if not raw:
+                break
+            m = json.loads(raw)
+            if m.get("type") != "event":
+                continue
+            data = m.get("event", {}).get("data", {})
+            ent = data.get("entity_id")
+            new_state = (data.get("new_state") or {}).get("state")
+            spec = event_map.get(ent)
+            if spec and new_state == spec.get("when"):
+                bus.publish(Event(spec["type"], spec.get("house_id", ""), ent,
+                                  {**spec.get("data", {}), "state": new_state}, 0))

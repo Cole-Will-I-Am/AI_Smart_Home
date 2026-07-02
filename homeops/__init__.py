@@ -4,4 +4,4 @@ See DESIGN.md (sections A–AA) for the architecture and config/houses.example.y
 for the canonical two-house model. This package simulates both houses entirely in
 software: no physical hardware, no real Home Assistant / OPNsense instance.
 """
-from .bootstrap import build_world, World  # noqa: F401
+from .bootstrap import build_world, build_real_world, start_event_bridge, World  # noqa: F401

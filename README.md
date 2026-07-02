@@ -84,6 +84,37 @@ no external infra); real Home Assistant and OPNsense drop in behind the `homeops
 interfaces without touching the engine, automations, or AI code. Models are dataclass-based
 to keep the dependency surface minimal.
 
+### Driving real hardware
+
+The same engine/automations/AI run unchanged against a live **Home Assistant** (REST for
+commands, WebSocket for the live event feed) and **OPNsense** (REST) — the only thing that
+changes is the adapter:
+
+```python
+from homeops import build_real_world, start_event_bridge
+
+world = build_real_world(
+    ha_base_url="http://homeassistant.local:8123", ha_token="<HA long-lived token>",
+    opn_base_url="https://opnsense.local", opn_key="<key>", opn_secret="<secret>",
+    entity_map={"house_a.lock.front_door": "lock.front_door"},        # homeops id -> real HA entity
+    event_map={"binary_sensor.leak_kitchen": {"type": "leak", "when": "on",
+                                              "house_id": "house_a", "data": {"flow": 45}}},
+    verify_tls=False,   # common for self-signed appliances
+)
+start_event_bridge(world)   # HA state_changed -> the same local-first automations
+```
+
+- **`homeops/adapters/homeassistant.py`** — maps every intent to an HA `domain.service` call,
+  reads prior state for rollback of the reversible subset (on/off, lock, cover, valve, alarm),
+  and bridges HA `state_changed` events onto the bus. Command actuation is stdlib-only
+  (`urllib`); the WebSocket bridge needs the optional `websocket-client` package.
+- **`homeops/adapters/opnsense.py`** — IoT quarantine (add host to a firewall alias +
+  reconfigure) and firewall-policy rules over the OPNsense API.
+- **`homeops/adapters/composite.py`** — routes `network` → OPNsense, everything else → HA.
+
+Both are unit-tested offline against a fake HTTP transport and a fake WebSocket connection
+(`tests/test_real_adapters.py`), so no live services or extra deps are needed to run the suite.
+
 ## Reference stack (local-first)
 
 Home Assistant OS cores (primary + cold spare per house) · Mosquitto MQTT · Zigbee2MQTT ·
