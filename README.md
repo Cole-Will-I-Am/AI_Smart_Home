@@ -52,6 +52,37 @@ L4/L5 actions have **no execution path** exposed to the AI — only a recommend/
   checklist.
 - **[config/houses.example.yaml](config/houses.example.yaml)** — the configuration schema
   realized as a working two-house example (role-based, so House B is a parameterized copy).
+- **`homeops/`** — a **runnable, mocked reference implementation** that simulates *both houses
+  entirely in software* (no hardware, no real HA/OPNsense): permission engine, command router,
+  local-first automations, device/network simulators behind adapter interfaces, and a Claude
+  ops layer. See below.
+
+## Run the reference implementation
+
+Everything in `DESIGN.md` is exercised in software so the architecture and the permission
+model can be validated before any hardware is bought. Local-first (automations run below the
+AI), human-override-preserving, and the AI can only *propose* — the deterministic engine
+decides.
+
+```bash
+pip install -r requirements.txt          # PyYAML + pytest (anthropic only for the live test)
+pytest -q                                # 37 tests: permissions, router, automations, fail-safe, local-first, AI-ops (offline)
+python scripts/run_scenario.py all       # replays leak / grid-loss / fire-CO / intrusion / rogue-device with asserted timelines
+python scripts/demo.py                   # end-to-end two-house demo (cross-house guard, WAN-down local-first, L4 refusal)
+python -m homeops.cli status             # dashboard of both houses
+```
+
+The Claude ops layer (`homeops/ai/`) uses `claude-opus-4-8` with adaptive thinking and a
+cached system prefix, and proposes actions through gated, audited tools. The offline suite
+drives it with a scripted mock (no network); an optional live smoke test runs with
+`ANTHROPIC_API_KEY=… pytest -m live`. When the API/internet is unavailable or a house is on
+"AI hold," it degrades to the deterministic fallback — the house is never in the AI's hands
+for safety.
+
+Design choices: the simulator is **in-process and synchronous** (deterministic, CI-runnable,
+no external infra); real Home Assistant and OPNsense drop in behind the `homeops/adapters/`
+interfaces without touching the engine, automations, or AI code. Models are dataclass-based
+to keep the dependency surface minimal.
 
 ## Reference stack (local-first)
 

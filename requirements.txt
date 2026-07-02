@@ -1,0 +1,5 @@
+PyYAML>=6.0
+pytest>=7.0
+# Optional — only needed for a LIVE Claude ops-layer run (pytest -m live).
+# The offline tests and the simulator do not import it.
+anthropic>=0.40
