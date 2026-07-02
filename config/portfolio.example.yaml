@@ -1,0 +1,32 @@
+# Example estate portfolio — proves the system is N-property, not hardcoded to two houses.
+# Each block is built from the same canonical role-based template (model.build_house), so a new
+# property is a config entry, not new code. This is the family-office / estate shape.
+houses:
+  primary_estate:
+    alias: "Primary Estate"
+    supernet: 10.10.0.0/16
+    rooms: [garage, kitchen, great_room, primary_suite, office, exterior]
+    zones:
+      climate: [main, upper]
+      water_freeze_risk: [garage, basement, exterior_hose_bibs]
+      perimeter: [front, back, gate]
+
+  lake_house:
+    alias: "Lake House (seasonal)"
+    supernet: 10.20.0.0/16
+    rooms: [garage, kitchen, great_room, bed1, exterior]
+    zones:
+      water_freeze_risk: [garage, boathouse, exterior_hose_bibs]
+      perimeter: [front, dock]
+
+  ski_chalet:
+    alias: "Ski Chalet (seasonal, high freeze risk)"
+    supernet: 10.30.0.0/16
+    rooms: [garage, kitchen, great_room, bed1, bed2, exterior]
+    zones:
+      water_freeze_risk: [garage, crawlspace, exterior_hose_bibs, well_house]
+      perimeter: [front, driveway]
+
+command_context:
+  active_house: primary_estate
+  confirmation_required_for_cross_house_commands: true
