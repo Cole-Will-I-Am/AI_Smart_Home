@@ -1,0 +1,142 @@
+# Two-House AI Operations Layer — sample configuration schema
+# Each house is fully described by its own block so House B is a parameterized
+# copy of House A (see DESIGN.md §S Transfer plan). Automations reference ROLES
+# (e.g. role: main_water_valve), not raw device IDs, so blueprints port cleanly.
+#
+# permission levels: 0 observe | 1 routine | 2 security/utility | 3 infra | 4 recommend | 5 prohibited
+
+houses:
+  house_a:
+    alias: "Main House"
+    supernet: 10.10.0.0/16
+    rooms: [garage, kitchen, living_room, primary_bed, bed2, bed3, office, basement, exterior]
+    zones:
+      climate: [upstairs, downstairs, basement]
+      water_freeze_risk: [garage, basement, exterior_hose_bibs]
+      perimeter: [front, back, driveway, side_gate]
+
+    devices:
+      lights:   { role: interior_lighting, control: direct, level: 1, protocol: zigbee, manual: wall_switch }
+      plugs:    { role: noncritical_plugs, control: direct, level: 1, protocol: matter }
+      blinds:   { role: shades, control: direct, level: 1 }
+      speakers: { role: intercom_audio, control: direct, level: 1 }
+
+    sensors:
+      contact:     { count: 22, protocol: zigbee }
+      motion:      { count: 14, type: [pir, mmwave] }
+      glass_break: { count: 6 }
+      vibration:   { count: 4 }
+      leak:        { role: leak_sensors, count: 9, locations: [kitchen, baths, laundry, water_heater, basement] }
+      smoke_co:    { primary: hardwired_interconnected_120v, monitored: true, ai_access: observe_only, level: 0 }
+      temp_humidity: { count: 12 }
+      air_quality: { count: 3, measures: [co2, voc, pm25] }
+      flood_freeze: { role: freeze_sensors, count: 5 }
+
+    cameras:
+      vlan: cameras
+      internet_route: false
+      nvr: { engine: frigate, edge_tpu: true, storage: nas_a, retention_days: 30 }
+      devices: [front_door, driveway, back_yard, side_gate, garage_int, doorbell]
+      ai_control: { recording_mode: direct_L2, export: confirm_L2 }
+
+    locks:
+      front_door:  { role: exterior_door, protocol: zwave, default: fail_secure, unlock: confirm_L2_mfa, manual: key }
+      back_door:   { role: exterior_door, protocol: zwave, default: fail_secure, unlock: confirm_L2_mfa, manual: key }
+      egress_side: { role: designated_egress_door, strike: fail_safe, fire_interlock: true, manual: always_operable_inside }
+      garage_ped:  { role: interior_door, protocol: matter }
+      garage_main: { role: garage_door, bridge: ratgdo_local, close: direct_L2, open: confirm_L2, manual: release_cord }
+      side_gate:   { role: gate, operator: relay, safety: obstruction_sensor }
+
+    power_systems:
+      panel:      { role: smart_panel, model: span, install: professional, per_circuit_metering: true }
+      breakers:   { critical: [furnace, fridge, network_rack, medical], noncritical: [ev, dryer, water_heater, spa] }
+      energy_meter: { type: ct_clamps, whole_home: true }
+      battery:    { role: battery_backup, model: powerwall, ai: mode_select_L3, monitor: soc }
+      solar:      { role: pv, inverter: enphase, monitor: [production, export] }
+      generator:  { role: generator, model: generac, ats: automatic, start: confirm_L3, install: professional }
+      ev_charger: { role: evcharger, load_management: true, ai: current_limit_L3 }
+      load_shed:  { staged: true, tiers: { tier1: [spa, ev], tier2: [dryer, water_heater], tier3: [hvac_aux] }, auto_revert: true }
+
+    water_systems:
+      main_valve: { role: main_water_valve, type: motorized_ball, driver: shelly, close: two_signal_or_confirm_L3, manual: lever_override }
+      flow_meter: { role: flow_meter, abnormal_threshold_lpm: 30 }
+      pressure:   { monitor: true, install: professional }
+      irrigation: { role: irrigation, controller: opensprinkler_local, control: direct_L2, zones: 8 }
+
+    hvac_systems:
+      thermostats: { role: thermostat, protocol: zwave_local, approved_range_f: [60, 82], mode_change: confirm_L3 }
+      zones: [upstairs, downstairs, basement]
+      emergency_shutoff: { circulation_stop_on_smoke: true, level: 3 }
+      humidity_control: { dehumidifier: basement, control: direct_L1 }
+
+    network_segments:
+      vlans:
+        trusted:    { internet: yes, reach_hub: api_mfa }
+        iot:        { internet: restricted, reach_hub: mqtt_only }
+        cameras:    { internet: none, reach_hub: nvr_only }
+        servers:    { internet: updates_only, hosts: [ha_core, nas_a, nvr_a, mgmt] }
+        guest:      { internet: isolated, reach_hub: no }
+        automation: { internet: none, hosts: [zigbee_coord, zwave_stick, thread_br] }
+      firewall: { engine: opnsense, ids_ips: suricata, remote_access: wireguard_only, forwarded_admin_ports: none }
+      ai_control: { quarantine_device: direct_L2, firewall_policy: confirm_L3, restructure: recommend_L4 }
+
+    automations: [leak_two_signal, unknown_device_quarantine, night_motion_floods, high_draw_shed,
+                  grid_failure, cross_house_guard, wan_failure_localmode, fire_co_response,
+                  freeze_protect, perimeter_suspicious]
+
+    permissions:
+      default_level: 0
+      operator_roles: { owner: all, spouse: all_confirm, guest: L0_L1, installer: scoped_temp }
+      confirmation_required: [unlock_exterior, disarm, garage_open, generator_start, main_water_shutoff, firewall_policy]
+      no_ai_execution_path: [main_breaker, utility_side, disable_alarms, unlock_for_unknown, life_safety_changes]  # L4/L5
+
+    emergency_rules:
+      fire_co: { egress_lights: on, unlock: designated_egress_only_if_safe, hvac: stop_circulation, notify: [occupants, monitoring] }
+      grid_loss: { verify: [battery_soc, generator_ready], shed: nonessential, keep_powered: [security, network, hub, fridge, medical] }
+      leak: { rule: leak_sensor AND abnormal_flow, action: close_main_valve, severity: urgent }
+      freeze: { action: raise_heat_vulnerable_zones, notify: true }
+      intrusion: { exterior_lights: on, cameras: record, exterior_doors: lock, escalate_on: corroboration }
+
+    backup_profile:
+      config_snapshots: nightly_encrypted
+      replicate_to: [house_b_nas, offsite]
+      cold_spare_core: true
+      ups: [router, switch, ha_core, nvr, nas]
+      restore_target_rto_min: 15
+
+  house_b:
+    alias: "Guest House"
+    supernet: 10.20.0.0/16
+    # House B mirrors House A's schema. Only house-specific divergences are shown;
+    # unspecified blocks inherit the shared blueprint defaults during bootstrap.
+    rooms: [garage, kitchen, great_room, bed1, bed2, office, exterior]
+    zones:
+      climate: [main, loft]
+      water_freeze_risk: [garage, exterior_hose_bibs]
+      perimeter: [front, back, driveway]
+    power_systems:
+      panel:     { role: smart_panel, model: lumin, install: professional }   # divergence: different panel
+      battery:   { role: battery_backup, model: franklinwh, ai: mode_select_L3 }
+      generator: { role: generator, shared_with: house_a, ats: automatic, start: confirm_L3 }
+    water_systems:
+      main_valve: { role: main_water_valve, type: moen_flo, close: two_signal_or_confirm_L3, manual: manual_ball_valve }
+    permissions:
+      default_level: 0
+      confirmation_required: [unlock_exterior, disarm, garage_open, generator_start, main_water_shutoff, firewall_policy]
+      no_ai_execution_path: [main_breaker, utility_side, disable_alarms, unlock_for_unknown, life_safety_changes]
+    emergency_rules: inherit_shared_blueprints
+    backup_profile:
+      config_snapshots: nightly_encrypted
+      replicate_to: [house_a_nas, offsite]
+      cold_spare_core: true
+      restore_target_rto_min: 15
+
+command_context:
+  active_house: house_a
+  confirmation_required_for_cross_house_commands: true
+  last_commanded_house: house_a
+  operator_identity: { id: owner, auth: mfa_verified }
+  command_log:
+    store: immutable_audit
+    fields: [ts, operator, house, subsystem, target, action, args, level, confirmed, result, rollback_token]
+  rollback_available: true   # per-action where the action is reversible
