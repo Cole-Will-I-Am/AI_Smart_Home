@@ -9,7 +9,7 @@
 *The AI proposes. A deterministic, fail-closed permission engine disposes.*
 
 ![python](https://img.shields.io/badge/python-3.10%2B-2f6bff?logo=python&logoColor=white&labelColor=0b1c40)
-![tests](https://img.shields.io/badge/tests-226%20passed-2ea043?labelColor=0b1c40)
+![tests](https://img.shields.io/badge/tests-240%20passed-2ea043?labelColor=0b1c40)
 ![core](https://img.shields.io/badge/core-stdlib--only-2f6bff?labelColor=0b1c40)
 ![cloud](https://img.shields.io/badge/cloud-none%20required-2f6bff?labelColor=0b1c40)
 ![models](https://img.shields.io/badge/models-any%20chat--completions%20model-2f6bff?labelColor=0b1c40)
@@ -41,8 +41,9 @@ the same structured intent and faces the same engine. No surface is privileged; 
 flowchart TD
     P["📱 Phone — HA Companion"] --> I
     V["🎙 Voice — HA Assist (local)"] --> I
-    C["⌨️ CLI / dashboard"] --> I
+    C["⌨️ CLI / dashboard"] --> G
     AI["🤖 AI ops layer (any chat-completions model) — proposes only"] --> I
+    G["🚪 Control Surface Gateway — phone · tablet · Alexa · Google · HA Assist → (Intent, Operator)"] --> I
     I{{"Intent — house · subsystem · target · action · operator"}}
     I --> E["Permission engine L0–L5 — RBAC · confirm tokens · semantic envelopes · L1 budget · signed attestation · cooldowns · health gate"]
     E -- "refuse / recommend-only (L4–L5)" --> X[("hash-chained audit")]
@@ -92,7 +93,7 @@ architecture and permission model can be validated before a single device is bou
 
 ```bash
 pip install -r requirements.txt        # PyYAML + pytest (anthropic only for the live test)
-pytest -q                              # 226 offline tests: permissions, router, automations,
+pytest -q                              # 240 offline tests: permissions, router, automations,
                                        #   fail-safe, local-first, AI-ops, audit, health, RBAC,
                                        #   portfolio, exporters, dashboard, service, preflight
 python scripts/run_scenario.py all    # leak / grid-loss / fire-CO / intrusion / rogue-device
@@ -193,6 +194,7 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 | Confirmation token replayed | tokens are unguessable, single-use, TTL-bounded, and bound to the **full intent + operator** |
 | Chat coaxes the model into confirming | tokens flow engine → resident → engine; tests assert issued tokens **never appear in the model's context** |
 | Model swapped for a different vendor | authority is model-invariant: any chat-completions endpoint (Claude · GPT · local Ollama/vLLM) translates wire formats only and faces the same engine, tools, and absent token |
+| Any surface (phone · tablet · Alexa · Google · HA Assist) tries to gate its own permissions | it cannot: the **Control Surface Gateway** is a pure translation to (Intent, Operator); the router is the sole authority, so the per-surface policy is a *consequence* of each device's role cap, never a second enforcement path that can drift ([`test_gateway.py`](tests/test_gateway.py)) |
 | A **hostile** model smuggles authority, proposes L5, and lies about it | capability varies, authority does not: forged `confirm_token`/`emergency`/cross-house fields are dropped by construction, L4/L5 have no path, zero actuation, and the audit chain contradicts the model's prose ([`test_any_model.py`](tests/test_any_model.py)) |
 | Spoofed leak event closes the main | two-signal rule re-reads **both** independent channels (wet sensor AND abnormal flow) at actuation time |
 | Rollback raced by a pending transition | rollback cancels in-flight physical transitions |
@@ -218,6 +220,7 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 | `homeops/automations.py` | local-first automations (run below the AI) |
 | `homeops/audit.py` | tamper-evident hash-chained audit, JSONL persistence, `verify_chain()` |
 | `homeops/health.py` · `identity.py` | device heartbeat gate · RBAC principals/roles/scopes |
+| `homeops/gateway/` | **Control Surface Gateway** — one authenticated write path; device auth, pending registry w/ attestation, cross-surface confirm; router stays sole authority |
 | `homeops/ai/` | model-agnostic ops layer (`providers.py`: Claude native · GPT SDK · any OpenAI-compatible/Ollama endpoint over stdlib HTTP): operational charter, gated tools, stateful resident chat with attestation surfacing (`session.py`), deterministic fallback |
 | `homeops/adapters/` | sim, Home Assistant, OPNsense, composite, per-property |
 | `homeops/simulator/` | both houses in software: devices, network, scenarios |
@@ -229,11 +232,12 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 ## Status — the honest ladder
 
 ```text
-reference implementation      ✓  complete, 226 tests
+reference implementation      ✓  complete, 240 tests
 pilot-ready software          ✓  audit chain · verified actuation · RBAC ·
                                  semantic envelopes · delegation certs ·
                                  authority-gated rollback · any-model plug ·
                                  L1 nuisance budget · signed attestations ·
+                                 control-surface gateway (phone/tablet/voice) ·
                                  N-property plane · HA life-safety export ·
                                  dashboard · runtime service · secrets ·
                                  preflight commissioning
