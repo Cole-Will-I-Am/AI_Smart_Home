@@ -2,7 +2,9 @@
 
     python -m homeops.cli status
     python -m homeops.cli command house_a light living_room turn_on
-    python -m homeops.cli ask [house_a]                       # resident chat (confirm/deny/house X/exit)
+    homeops chat [house_a] [--model M] [--provider P] [--base-url URL] [--ollama M]
+                                                             # resident chat through ANY model you choose
+    python -m homeops.cli ask [house_a]                       # alias for chat
     python -m homeops.cli soc [house_a]                      # Home-SOC situation report (readiness/incidents/drift)
     python -m homeops.cli twin [house_a]                     # estate digital twin (risk by room/subsystem/device)
     python -m homeops.cli safety-case                        # run the safety case (claims -> live tests)
@@ -17,6 +19,76 @@ from .bootstrap import build_world
 from .permissions import Intent, Operator
 
 
+import os
+
+
+# --- model selection: turn CLI flags + env into the ai: dict provider_from_config understands ---
+# Precedence (highest first): explicit flags  >  HOMEOPS_AI_* env  >  ANTHROPIC/OPENAI key auto-detect
+#   >  the deployment's ai: section  >  none (deterministic fallback). Fail-closed: a partial
+# openai-compatible config raises a clear error rather than silently falling back.
+def resolve_ai_config(args: dict, environ: dict | None = None, dep_ai: dict | None = None) -> dict:
+    env = os.environ if environ is None else environ
+    # 2a. explicit flags win
+    if args.get("ollama") is not None:
+        return {"provider": "openai-compatible", "model": args["ollama"],
+                "base_url": args.get("base_url") or "http://127.0.0.1:11434/v1"}
+    if args.get("provider") or args.get("base_url") or args.get("model"):
+        ai = {"provider": args.get("provider")
+              or ("openai-compatible" if args.get("base_url") else None),
+              "model": args.get("model")}
+        if args.get("base_url"):
+            ai["base_url"] = args["base_url"]
+        if ai["provider"]:
+            return ai
+    # 2b. HOMEOPS_AI_* environment
+    if env.get("HOMEOPS_AI_PROVIDER") or env.get("HOMEOPS_AI_BASE_URL"):
+        ai = {"provider": env.get("HOMEOPS_AI_PROVIDER")
+              or ("openai-compatible" if env.get("HOMEOPS_AI_BASE_URL") else None),
+              "model": args.get("model") or env.get("HOMEOPS_AI_MODEL")}
+        if env.get("HOMEOPS_AI_BASE_URL"):
+            ai["base_url"] = env["HOMEOPS_AI_BASE_URL"]
+        if ai["provider"]:
+            return ai
+    # 2c. bare SDK key auto-detect (convenience — the classic path)
+    if env.get("ANTHROPIC_API_KEY"):
+        return {"provider": "anthropic", "model": args.get("model") or env.get("HOMEOPS_AI_MODEL")}
+    if env.get("OPENAI_API_KEY"):
+        return {"provider": "openai", "model": args.get("model") or env.get("HOMEOPS_AI_MODEL")}
+    # 2d. deployment ai: section, else none
+    if dep_ai:
+        return dict(dep_ai)
+    return {"provider": "none"}
+
+
+def build_chat_session(world, args: dict, environ: dict | None = None, house: str = "house_a"):
+    """Resolve a provider from flags/env and build a model-agnostic ChatSession. Returns
+    (session, banner). No network is touched here — providers construct lazily."""
+    from .ai.providers import provider_from_config
+    from .ai.session import ChatSession
+    ai = resolve_ai_config(args, environ)
+    provider, model = provider_from_config(ai)     # raises on a partial/invalid config (fail-closed)
+    session = ChatSession(world, client=provider, active_house=house, model=model)
+    if provider is None:
+        banner = "(no model configured — deterministic fallback; still engine-gated and audited)"
+    else:
+        banner = f"(model: {session.provider.name}/{session.model})"
+    return session, banner
+
+
+def _parse_chat_args(argv: list[str]) -> tuple[str, dict]:
+    """argv after the subcommand -> (house, flags). Accepts a bare house positional plus
+    --model/--provider/--base-url/--ollama."""
+    house, args = "house_a", {}
+    it = iter(argv)
+    for tok in it:
+        if tok in ("--model", "--provider", "--base-url", "--ollama"):
+            key = tok.lstrip("-").replace("-", "_")
+            args[key] = next(it, None)
+        elif not tok.startswith("-"):
+            house = tok
+    return house, args
+
+
 def status(world) -> None:
     for hid, house in world.houses.items():
         print(f"== {hid} ({house.alias}) mode={house.mode} wan={'up' if house.wan_up else 'DOWN'} "
@@ -27,29 +99,18 @@ def status(world) -> None:
                 print("   " + sub + ": " + ", ".join(f"{e.name}={e.state}" for e in ents))
 
 
-def ask(world, house: str) -> int:
-    """Resident chat REPL. Uses the live Claude client when ANTHROPIC_API_KEY is set,
-    otherwise the deterministic fallback (still engine-gated, still audited)."""
-    import os
-    from .ai.session import ChatSession
-    client = None
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        try:
-            import anthropic
-            client = anthropic.Anthropic()
-        except ImportError:
-            print("(anthropic package missing — running on the deterministic fallback)")
-    elif os.environ.get("OPENAI_API_KEY"):
-        try:
-            import openai
-            client = openai.OpenAI()
-        except ImportError:
-            print("(openai package missing — running on the deterministic fallback)")
-    session = ChatSession(world, client=client, active_house=house,
-                          model=os.environ.get("HOMEOPS_AI_MODEL"))
-    if client is not None:
-        print(f"(model: {session.provider.name}/{session.model})")
-    print(f"HouseCommand chat — active house: {house}. Commands: confirm [n] · deny [n] · house <id> · exit")
+def chat(world, house: str, args: dict | None = None) -> int:
+    """Resident chat REPL, model-agnostic: runs through whatever LLM the flags/env select
+    (Claude, GPT, or any OpenAI-compatible/Ollama endpoint), else a deterministic fallback.
+    Confirmations show the ENGINE's attested effect — ground truth, not the model's prose."""
+    try:
+        session, banner = build_chat_session(world, args or {}, house=house)
+    except ValueError as e:
+        print(f"model configuration error: {e}")
+        return 2
+    print(banner)
+    print(f"HouseCommand chat — active house: {house}. "
+          "Commands: confirm [n] · deny [n] · house <id> · exit")
     while True:
         try:
             line = input("you> ").strip()
@@ -74,14 +135,20 @@ def ask(world, house: str) -> int:
             r = session.confirm(idx) if parts[0] == "confirm" else session.deny(idx)
             print(f"  -> {r['status']}: {r['message']}")
             continue
-        out = session.ask(line)
+        try:
+            out = session.ask(line)
+        except Exception as e:   # a flaky/unauthorized endpoint must not kill the session
+            print(f"  (model error: {type(e).__name__}: {str(e)[:160]})")
+            print("  (the house is unaffected — no intent was proposed; try again or switch model)")
+            continue
         for a in out.get("actions", []):
             label = a.get("intent", {}).get("action") or a.get("cmd") or a.get("tool", "?")
             print(f"  [{a.get('status','?')}] {label}: {a.get('message','')}")
         if out.get("final"):
             print(f"hc> {out['final']}")
-        for i, pnd in enumerate(out.get("pending", []), 1):
-            print(f"  ⏳ awaiting confirmation {i}: {pnd}   (type: confirm {i})")
+        # Surface the engine's signed effect sentence for each pending item — the deed, not the prose.
+        for i, p in enumerate(session.pending, 1):
+            print(f"  \u23f3 confirm {i}: {p.effect}   (type: confirm {i})")
 
 
 def main(argv: list[str]) -> int:
@@ -95,8 +162,9 @@ def main(argv: list[str]) -> int:
                                  Operator("owner", house, "cli"))
         print(f"{r.status}: {r.message}" + (f"  (confirm token: {r.confirm_token})" if r.confirm_token else ""))
         return 0
-    if argv[0] == "ask":
-        return ask(world, argv[1] if len(argv) > 1 else "house_a")
+    if argv[0] in ("chat", "ask"):
+        house, args = _parse_chat_args(argv[1:])
+        return chat(world, house, args)
     if argv[0] == "soc":
         from . import soc as _soc
         import json as _json
@@ -146,6 +214,11 @@ def main(argv: list[str]) -> int:
         return Service(dep, secrets=secrets).run()
     print(__doc__)
     return 1
+
+
+def main_entry() -> int:
+    """Console-script entry point (`homeops ...`)."""
+    return main(sys.argv[1:])
 
 
 if __name__ == "__main__":

@@ -7,6 +7,15 @@ authors = [{ name = "Colton Williams" }]
 requires-python = ">=3.10"
 dependencies = ["PyYAML>=6.0"]
 
+[project.optional-dependencies]
+# BYO-model at the terminal needs no vendor SDK for OpenAI-compatible/Ollama endpoints (stdlib
+# HTTP). These extras are only for the native SDK paths.
+anthropic = ["anthropic>=0.40"]
+openai = ["openai>=1.40"]
+
+[project.scripts]
+homeops = "homeops.cli:main_entry"
+
 [tool.pytest.ini_options]
 markers = [
     "live: hits the real Claude API (needs ANTHROPIC_API_KEY); skipped by default",

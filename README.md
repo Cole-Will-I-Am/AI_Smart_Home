@@ -9,7 +9,7 @@
 *The AI proposes. A deterministic, fail-closed permission engine disposes.*
 
 ![python](https://img.shields.io/badge/python-3.10%2B-2f6bff?logo=python&logoColor=white&labelColor=0b1c40)
-![tests](https://img.shields.io/badge/tests-240%20passed-2ea043?labelColor=0b1c40)
+![tests](https://img.shields.io/badge/tests-252%20passed-2ea043?labelColor=0b1c40)
 ![core](https://img.shields.io/badge/core-stdlib--only-2f6bff?labelColor=0b1c40)
 ![cloud](https://img.shields.io/badge/cloud-none%20required-2f6bff?labelColor=0b1c40)
 ![models](https://img.shields.io/badge/models-any%20chat--completions%20model-2f6bff?labelColor=0b1c40)
@@ -93,16 +93,22 @@ architecture and permission model can be validated before a single device is bou
 
 ```bash
 pip install -r requirements.txt        # PyYAML + pytest (anthropic only for the live test)
-pytest -q                              # 240 offline tests: permissions, router, automations,
+pytest -q                              # 252 offline tests: permissions, router, automations,
                                        #   fail-safe, local-first, AI-ops, audit, health, RBAC,
                                        #   portfolio, exporters, dashboard, service, preflight
 python scripts/run_scenario.py all    # leak / grid-loss / fire-CO / intrusion / rogue-device
 python scripts/demo.py                # end-to-end: cross-house guard, WAN-down local-first, L4 refusal
 python -m homeops.cli status          # both houses at a glance
-python -m homeops.cli ask             # resident chat: memory, in-dialogue confirm/deny
-                                      #   model chosen in the deployment's ai: section
-                                      #   (Claude · GPT · any OpenAI-compatible/Ollama endpoint · none -> deterministic fallback)
+homeops chat --ollama qwen3:14b       # resident chat through ANY model you choose:
+homeops chat --model gpt-5.1          #   --ollama M · --model M · --provider P · --base-url URL,
+homeops chat --base-url https://openrouter.ai/api/v1 --model deepseek/deepseek-chat
+                                      #   or HOMEOPS_AI_* env, or an ANTHROPIC/OPENAI key;
+                                      #   nothing configured -> deterministic fallback (still gated + audited)
 ```
+
+After `pip install -e .`, `homeops` is a console command (`homeops status`, `homeops chat …`),
+the developer's entry point: pick the reasoning layer with a flag or `HOMEOPS_AI_*` env and drive
+the estate from a terminal — no vendor SDK needed for local/OpenAI-compatible endpoints.
 
 The ops layer (`homeops/ai/`) is **model-agnostic**: a neutral transcript is translated to any
 vendor wire format by a `Provider`, so Claude (native), GPT, or any OpenAI-compatible endpoint
@@ -232,7 +238,7 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 ## Status — the honest ladder
 
 ```text
-reference implementation      ✓  complete, 240 tests
+reference implementation      ✓  complete, 252 tests
 pilot-ready software          ✓  audit chain · verified actuation · RBAC ·
                                  semantic envelopes · delegation certs ·
                                  authority-gated rollback · any-model plug ·
