@@ -1,98 +1,134 @@
-# AI_Smart_Home — Two-House AI Operations Layer
+<div align="center">
 
-Infrastructure-grade residential command-and-control architecture for two adjacent
-properties (**House A**, **House B**) sharing one AI operations layer. Designed for
-**capability first**, but built on three non-negotiables: **local-first reliability**,
-**human override on every system**, and **strong network segmentation**.
+<img src="assets/logo.svg" width="180" alt="HouseCommand emblem — a house over a hexagonal core with a terminal prompt"/>
 
-## What this is
+# HouseCommand · `homeops`
 
-A serious residential "AI ops layer" — not a consumer smart-home kit — that can monitor,
-coordinate, and control power, backup/solar/generator, lighting, HVAC, water, locks/access,
-garage/gates, cameras, perimeter and life-safety sensors, network/cybersecurity, appliances,
-intercoms, and occupancy across both houses, under a graduated permission model that keeps
-dangerous actions behind hardware, confirmation, and human approval.
+**A two-house AI operations layer that treats the home as critical infrastructure.**
+
+*The AI proposes. A deterministic, fail-closed permission engine disposes.*
+
+![python](https://img.shields.io/badge/python-3.10%2B-2f6bff?logo=python&logoColor=white&labelColor=0b1c40)
+![tests](https://img.shields.io/badge/tests-119%20passed-2ea043?labelColor=0b1c40)
+![core](https://img.shields.io/badge/core-stdlib--only-2f6bff?labelColor=0b1c40)
+![cloud](https://img.shields.io/badge/cloud-none%20required-2f6bff?labelColor=0b1c40)
+![status](https://img.shields.io/badge/status-reference%20implementation-d29922?labelColor=0b1c40)
+
+[**DESIGN.md**](DESIGN.md) · [**Strategy**](docs/STRATEGY.md) · [**Productization**](docs/PRODUCTIZATION.md) · [**housecommand.manticthink.com**](https://housecommand.manticthink.com)
+
+</div>
+
+---
+
+## Why this exists
+
+A serious residential **AI ops layer** — not a consumer smart-home kit — for two adjacent
+properties (**House A**, **House B**) sharing one operations plane. It monitors, coordinates,
+and controls power, backup/solar/generator, lighting, HVAC, water, locks/access, garage/gates,
+cameras, perimeter and life-safety sensors, network/cybersecurity, appliances, intercoms, and
+occupancy — under a graduated permission model that keeps dangerous actions behind hardware,
+confirmation, and human approval. Capability first, but on three non-negotiables:
+**local-first reliability**, **human override on every system**, **strong network segmentation**.
+
+## The whole system in one diagram
+
+Every surface — a phone tap, a voice command, the CLI, or the Claude ops layer — collapses into
+the same structured intent and faces the same engine. No surface is privileged; the AI least of all.
+
+```mermaid
+flowchart TD
+    P["📱 Phone — HA Companion"] --> I
+    V["🎙 Voice — HA Assist (local)"] --> I
+    C["⌨️ CLI / dashboard"] --> I
+    AI["🤖 Claude ops layer — proposes only"] --> I
+    I{{"Intent — house · subsystem · target · action · operator"}}
+    I --> E["Permission engine L0–L5 — RBAC · confirm tokens · cooldowns · health gate"]
+    E -- "refuse / recommend-only (L4–L5)" --> X[("hash-chained audit")]
+    E -- approved --> R["Router — verified actuation + rollback"]
+    R --> X
+    R --> A["HA adapter · House A"]
+    R --> B["HA adapter · House B"]
+    R --> N["OPNsense adapter — quarantine / firewall"]
+    A --> HA1["Home Assistant A"] --> D1["Zigbee · Z-Wave · Thread/Matter · relays"]
+    B --> HA2["Home Assistant B"] --> D2["Zigbee · Z-Wave · Thread/Matter · relays"]
+```
+
+Below all of it sits the invariant that software never gets the last word: **every physical
+switch, key, valve, breaker, and thermostat always works**, and a per-house **AI hold** suspends
+AI actuation while local automations keep running.
 
 ## Core principles
 
-- **Local-first:** every critical automation runs on-premises (Home Assistant + Node-RED)
-  with no cloud and no internet. The AI *augments* the house; it is never a dependency.
-- **Human override everywhere:** physical switch, valve, key, breaker, and thermostat always
-  work. A per-house "AI hold" suspends AI actuation while local automations keep running.
-- **Segmented & hardened:** separate VLANs for trusted, IoT, cameras, servers, guest, and
-  automation; WireGuard-only remote access; MFA; audit logging; no default creds, no exposed
-  management ports.
-- **Two-house separation:** independent cores, networks, identities, and logs. Every command
-  resolves to exactly one house; cross-house or high-impact actions require explicit confirm.
-- **Safe high-power integration:** panels, breakers, generator, solar, battery, ATS, and
-  egress hardware are professionally installed and inspected. The AI monitors freely and
-  controls only through approved equipment; it never bypasses a code-required safety system.
+| Principle | Meaning |
+|---|---|
+| **Local-first** | Every critical automation runs on-premises (Home Assistant + Node-RED), no cloud, no internet. The AI *augments* the house; it is never a dependency. |
+| **Human override everywhere** | Physical controls always work; "AI hold" per house; manual overrides are audited, never blocked. |
+| **Segmented & hardened** | VLANs for trusted / IoT / cameras / servers / guest / automation; WireGuard-only remote access; MFA; no default creds, no exposed management ports. |
+| **Two-house separation** | Independent cores, networks, identities, logs. Every command resolves to exactly one house; cross-house or high-impact actions require explicit confirmation. |
+| **Safe high-power integration** | Panels, breakers, generator, solar, battery, ATS, egress hardware: professionally installed and inspected. The AI never bypasses a code-required safety system. |
 
-## AI permission model (6 levels)
+## The permission ladder
 
-| Level | Name | AI capability |
+The level is a property of the **action**, enforced server-side — the AI cannot self-escalate.
+
+| | Level | AI capability |
 |---|---|---|
-| 0 | Observe | read all sensors, cameras, meters, logs, network, power, water, environment |
-| 1 | Routine | direct: lights, thermostats (in range), fans, blinds, speakers, non-critical plugs, scenes, notifications |
-| 2 | Security/Utility | conditioned/confirmed: locks, arm/disarm, garage (confirm), exterior lights, water shutoff, irrigation, IoT quarantine, camera modes, alarm escalation |
-| 3 | Power/Infra | approved HW + confirm: smart panel/breakers, load-shed, generator start, battery modes, EV limits, HVAC emergency shutoff, whole-house water shutoff, firewall policy |
-| 4 | Recommend only | main breaker, utility side, permanent firewall restructure, life-safety changes, unlocking for unknown persons — **notify a human, no auto-execute** |
-| 5 | Prohibited | bypass electrical safety, disable smoke/CO, meter tampering, illegal lock defeat, disable emergency systems, interfere with responders |
+| 🟢 | **L0 · Observe** | read all sensors, cameras, meters, logs, network, power, water, environment |
+| 🟢 | **L1 · Routine** | direct: lights, thermostats (in range), fans, blinds, speakers, non-critical plugs, scenes, notifications |
+| 🟡 | **L2 · Security/Utility** | conditioned/confirmed: locks, arm/disarm, garage, exterior lights, water shutoff, irrigation, IoT quarantine, camera modes, alarm escalation |
+| 🟠 | **L3 · Power/Infra** | approved HW + confirm: smart panel/breakers, load-shed, generator start, battery modes, EV limits, HVAC emergency shutoff, whole-house water main, firewall policy |
+| 🔴 | **L4 · Recommend only** | main breaker, utility side, permanent firewall restructure, life-safety changes, unlocking for unknown persons — **notify a human, no auto-execute** |
+| ⛔ | **L5 · Prohibited** | bypass electrical safety, disable smoke/CO, meter tampering, illegal lock defeat, disable emergency systems, interfere with responders |
 
-L4/L5 actions have **no execution path** exposed to the AI — only a recommend/notify path.
+**L4/L5 have no execution path exposed to the AI** — only a recommend/notify path exists in the code.
 
-## Repository
+## Quickstart — a full estate in software, thirty seconds
 
-- **[DESIGN.md](DESIGN.md)** — the full structured technical plan, sections **A–AA**:
-  architecture, house separation, control hierarchy, per-subsystem capability contracts
-  (monitor / direct / confirm / professional / manual / failure / recovery), electrical,
-  water, security, cameras, HVAC, network, local server, command interface, permission
-  levels, automation policy, emergency logic, transfer plan, install phases, testing,
-  maintenance, risk controls, example commands & automations, BOM, and the deployment
-  checklist.
-- **[config/houses.example.yaml](config/houses.example.yaml)** — the configuration schema
-  realized as a working two-house example (role-based, so House B is a parameterized copy).
-- **`homeops/`** — a **runnable, mocked reference implementation** that simulates *both houses
-  entirely in software* (no hardware, no real HA/OPNsense): permission engine, command router,
-  local-first automations, device/network simulators behind adapter interfaces, and a Claude
-  ops layer. See below.
-
-## Run the reference implementation
-
-Everything in `DESIGN.md` is exercised in software so the architecture and the permission
-model can be validated before any hardware is bought. Local-first (automations run below the
-AI), human-override-preserving, and the AI can only *propose* — the deterministic engine
-decides.
+Both houses are simulated in-process (no hardware, no HA, no network), so the entire
+architecture and permission model can be validated before a single device is bought.
 
 ```bash
-pip install -r requirements.txt          # PyYAML + pytest (anthropic only for the live test)
-pytest -q                                # full offline suite: permissions, router, automations, fail-safe,
-                                         #   local-first, AI-ops, audit, health, RBAC, portfolio, exporters, dashboard
-python scripts/run_scenario.py all       # replays leak / grid-loss / fire-CO / intrusion / rogue-device with asserted timelines
-python scripts/demo.py                   # end-to-end two-house demo (cross-house guard, WAN-down local-first, L4 refusal)
-python -m homeops.cli status             # dashboard of both houses
-python -m homeops.cli validate  deploy/deployment.example.yaml   # offline lint (fail-closed)
-python -m homeops.cli preflight /etc/homeops/deployment.yaml     # read-only live commissioning
-python -m homeops.cli serve     /etc/homeops/deployment.yaml     # systemd-managed runtime
+pip install -r requirements.txt        # PyYAML + pytest (anthropic only for the live test)
+pytest -q                              # 119 offline tests: permissions, router, automations,
+                                       #   fail-safe, local-first, AI-ops, audit, health, RBAC,
+                                       #   portfolio, exporters, dashboard, service, preflight
+python scripts/run_scenario.py all    # leak / grid-loss / fire-CO / intrusion / rogue-device
+python scripts/demo.py                # end-to-end: cross-house guard, WAN-down local-first, L4 refusal
+python -m homeops.cli status          # both houses at a glance
 ```
 
-The Claude ops layer (`homeops/ai/`) uses `claude-opus-4-8` with adaptive thinking and a
-cached system prefix, and proposes actions through gated, audited tools. The offline suite
-drives it with a scripted mock (no network); an optional live smoke test runs with
-`ANTHROPIC_API_KEY=… pytest -m live`. When the API/internet is unavailable or a house is on
-"AI hold," it degrades to the deterministic fallback — the house is never in the AI's hands
-for safety.
+The Claude ops layer (`homeops/ai/`, `claude-opus-4-8`, adaptive thinking, cached system prefix)
+proposes actions through gated, audited tools; the offline suite drives it with a scripted mock.
+If the API or internet is unavailable, or a house is on AI hold, it degrades to a deterministic
+fallback — **the house is never in the AI's hands for safety**.
 
-Design choices: the simulator is **in-process and synchronous** (deterministic, CI-runnable,
-no external infra); real Home Assistant and OPNsense drop in behind the `homeops/adapters/`
-interfaces without touching the engine, automations, or AI code. Models are dataclass-based
-to keep the dependency surface minimal.
+## Operating it for real
+
+The ops lifecycle is three fail-closed steps — each refuses loudly rather than degrading silently:
+
+```text
+validate ──▶ preflight ──▶ serve
+offline lint   read-only live    systemd daemon; read-only,
+(exit 1 on     commissioning     token-gated HTTP surface
+ any fail)     (GET-only, never  (/ , /healthz); no write
+               actuates)         path exists on the network
+```
+
+```bash
+python -m homeops.cli validate  deploy/deployment.example.yaml
+python -m homeops.cli preflight /etc/homeops/deployment.yaml
+python -m homeops.cli serve     /etc/homeops/deployment.yaml    # or: deploy/install.sh + systemd
+```
+
+Secrets never live in config: they come from the environment or a **0600-enforced** secrets file
+(`homeops/secrets.py` refuses to start on a group/other-readable file). A non-loopback dashboard
+bind without a bearer token is a startup refusal. See [`deploy/`](deploy/) for the hardened
+systemd unit and installer.
 
 ### Driving real hardware
 
-The same engine/automations/AI run unchanged against a live **Home Assistant** (REST for
-commands, WebSocket for the live event feed) and **OPNsense** (REST) — the only thing that
-changes is the adapter:
+The same engine, automations, and AI run unchanged against live **Home Assistant** (REST commands,
+WebSocket events) and **OPNsense** (REST) — only the adapter changes:
 
 ```python
 from homeops import build_real_world, start_event_bridge
@@ -100,73 +136,75 @@ from homeops import build_real_world, start_event_bridge
 world = build_real_world(
     ha_base_url="http://homeassistant.local:8123", ha_token="<HA long-lived token>",
     opn_base_url="https://opnsense.local", opn_key="<key>", opn_secret="<secret>",
-    entity_map={"house_a.lock.front_door": "lock.front_door"},        # homeops id -> real HA entity
+    entity_map={"house_a.lock.front_door": "lock.front_door"},   # homeops id -> real HA entity
     event_map={"binary_sensor.leak_kitchen": {"type": "leak", "when": "on",
                                               "house_id": "house_a", "data": {"flow": 45}}},
-    verify_tls=False,   # common for self-signed appliances
 )
 start_event_bridge(world)   # HA state_changed -> the same local-first automations
 ```
 
-- **`homeops/adapters/homeassistant.py`** — maps every intent to an HA `domain.service` call,
-  reads prior state for rollback of the reversible subset (on/off, lock, cover, valve, alarm),
-  and bridges HA `state_changed` events onto the bus. Command actuation is stdlib-only
-  (`urllib`); the WebSocket bridge needs the optional `websocket-client` package.
-- **`homeops/adapters/opnsense.py`** — IoT quarantine (add host to a firewall alias +
-  reconfigure) and firewall-policy rules over the OPNsense API.
-- **`homeops/adapters/composite.py`** — routes `network` → OPNsense, everything else → HA.
+- [`adapters/homeassistant.py`](homeops/adapters/homeassistant.py) — intent → HA `domain.service`,
+  prior-state rollback for the reversible subset, `state_changed` bridge. Stdlib-only commands.
+- [`adapters/opnsense.py`](homeops/adapters/opnsense.py) — IoT quarantine (firewall alias +
+  reconfigure) and firewall policy.
+- [`adapters/composite.py`](homeops/adapters/composite.py) — `network` → OPNsense, everything else → HA.
 
-Both are unit-tested offline against a fake HTTP transport and a fake WebSocket connection
-(`tests/test_real_adapters.py`), so no live services or extra deps are needed to run the suite.
+Both are unit-tested offline against fake transports — the suite needs no live services.
 
-### Hardening from external review
+## What the engine guarantees
 
-The permission model was adversarially reviewed (by a different LLM) and hardened; each fix has
-a regression test in `tests/test_hardening.py`:
+Adversarially reviewed (by a different LLM) and hardened; every row has a regression test in
+[`tests/test_hardening.py`](tests/test_hardening.py) and friends.
 
-- The AI can no longer self-confirm cross-house actions (the `confirm_cross_house` flag was removed
-  from the AI tool surface — a human must confirm).
-- Confirmation tokens are now unguessable (`secrets`) and bound to the **full intent (including
-  args) and the operator identity** — a token can't be reused with different args or by a different
-  operator.
-- The leak "two-signal" rule re-reads **both independent state channels** (wet sensor AND abnormal
-  flow) at actuation time; a spoofed or stale `leak` event no longer closes the valve.
-- Rollback cancels pending physical transitions (an undone valve close won't sneak to "closed" two
-  ticks later).
-- The real HA adapter **verifies safety-impacting actions** by reading device state back — HTTP 200
-  is not treated as proof a valve closed or a lock threw.
-- The AI fallback runs as an AI-limited operator, never silently as `owner`.
-- Adapter action mappings are **fail-closed** (a stray `unlock_unknown` can't become `lock.unlock`),
-  OPNsense checks every mutating call, and rollbacks + manual overrides are now audited.
-- `build_real_world(strict_entity_map=True)` **fails startup** if any controllable entity lacks an
-  explicit HA mapping — preventing House A and House B from collapsing onto the same real entities.
+| Threat | Defense |
+|---|---|
+| AI self-confirms a cross-house action | `confirm_cross_house` removed from the AI tool surface — a human must confirm |
+| Confirmation token replayed | tokens are unguessable, single-use, TTL-bounded, and bound to the **full intent + operator** |
+| Spoofed leak event closes the main | two-signal rule re-reads **both** independent channels (wet sensor AND abnormal flow) at actuation time |
+| Rollback raced by a pending transition | rollback cancels in-flight physical transitions |
+| HTTP 200 treated as physical truth | safety-impacting actions are **verified by read-back**; unverified outcomes are recorded as such |
+| Dead device silently "commanded" | health gate refuses safety-critical actuation on offline/stale devices |
+| AI fallback escalates | the fallback runs as an AI-limited operator, never silently as `owner` |
+| Stray action maps to a dangerous service | adapter mappings are **fail-closed** (`unlock_unknown` can never become `lock.unlock`) |
+| Houses collapse onto shared devices | `strict_entity_map` fails startup if any controllable entity lacks an explicit mapping; the validator also rejects duplicate targets |
+| Python process dies with the safety logic | `homeops/exporters/` emits the life-safety subset (leak, fire/CO, freeze) as **native HA automations** — the Python layer is the coordination tier, never the last line of defense |
 
-> **Deployment caveat (by design, not a bug):** in this reference implementation the local-first
-> automations run in the Python event bus. A production deployment should ALSO express the
-> life-safety subset (leak, fire/CO, freeze) as **native Home Assistant / Node-RED automations** so
-> they keep running even if this Python process dies. The Python layer is the AI-coordination and
-> validation tier; it is not the last line of defense. `homeops.exporters` generates exactly those
-> native HA automations — see below.
+## Module map
 
-### Pilot-hardening modules (`docs/PRODUCTIZATION.md`)
+| Path | Purpose |
+|---|---|
+| `homeops/permissions.py` | the L0–L5 model: action levels, confirm tokens, cooldowns |
+| `homeops/router.py` | resolution pipeline, verified actuation, rollback tokens |
+| `homeops/automations.py` | local-first automations (run below the AI) |
+| `homeops/audit.py` | tamper-evident hash-chained audit, JSONL persistence, `verify_chain()` |
+| `homeops/health.py` · `identity.py` | device heartbeat gate · RBAC principals/roles/scopes |
+| `homeops/ai/` | Claude ops layer: gated tools, prompts, deterministic fallback |
+| `homeops/adapters/` | sim, Home Assistant, OPNsense, composite, per-property |
+| `homeops/simulator/` | both houses in software: devices, network, scenarios |
+| `homeops/portfolio.py` · `dashboard.py` | N-property control plane · HTML oversight view |
+| `homeops/exporters/` | native HA life-safety automation YAML |
+| `homeops/service.py` · `deployment.py` · `secrets.py` · `preflight.py` | runtime daemon · descriptor + offline lint · fail-closed secrets · read-only commissioning |
+| `config/` · `deploy/` · `docs/` | house schema + portfolio examples · systemd/installer · strategy & productization |
 
-Beyond the core reference impl, these move it toward a pilot-ready managed service (each with tests):
+## Status — the honest ladder
 
-- **`homeops/audit.py`** — tamper-evident, hash-chained, append-only audit (`verify_chain()`), optional
-  JSONL persistence reloaded + re-verified on restart.
-- **`homeops/health.py`** — per-device health/heartbeat; the router refuses safety-critical actuation on
-  an offline/stale device and records `unverified` when a device accepts a command but doesn't move.
-- **`homeops/identity.py`** — RBAC: authenticated principals (owner / estate-manager / installer /
-  monitor / …) with a role capability cap and per-property scope.
-- **`homeops/portfolio.py`** + **`config/portfolio.example.yaml`** — N-property portfolio view (the
-  estate/family-office shape); **`homeops/adapters/per_property.py`** routes each property to its own HA/OPNsense.
-- **`homeops/exporters/`** — emits native Home Assistant life-safety automation YAML (leak/freeze/fire-CO).
-- **`homeops/dashboard.py`** — self-contained HTML operator oversight view (`render_dashboard`).
+```text
+reference implementation      ✓  complete, 119 tests
+pilot-ready software          ✓  audit chain · verified actuation · RBAC ·
+                                 N-property plane · HA life-safety export ·
+                                 dashboard · runtime service · secrets ·
+                                 preflight commissioning
+supervised real-house pilot   ◐  software side complete; actuation trials
+                                 require a human at each device
+production                    ✗  requires the real world (below)
+```
 
-The full commercialization analysis and blocker ranking are in **`docs/STRATEGY.md`** and
-**`docs/PRODUCTIZATION.md`**. Reality check: this is pilot-hardening *scaffolding* — real deployment
-still requires an independent security review, verified fail-safe on real hardware, licensed-professional
-installation, and a liability/insurance structure.
+> [!IMPORTANT]
+> This is a reference implementation and pilot-hardening scaffold. Real deployment still
+> requires an **independent security review** of the actuation plane, **verified fail-safe on
+> real heterogeneous hardware**, **licensed-professional installation**, and a
+> **liability/insurance structure**. Full analysis: [`docs/STRATEGY.md`](docs/STRATEGY.md) ·
+> [`docs/PRODUCTIZATION.md`](docs/PRODUCTIZATION.md).
 
 ## Reference stack (local-first)
 
@@ -177,7 +215,14 @@ Suricata IDS/IPS · Frigate NVR + edge-TPU on an isolated camera VLAN · smart p
 motorized water main + flow/pressure + leak mesh · Z-Wave/Matter locks + monitored alarm
 panel · UPS + NAS (ZFS) · WireGuard remote access.
 
-> **Scope note.** This is an architecture and configuration blueprint. Electrical,
-> generator, solar/battery, gas, plumbing, egress, and life-safety work must be performed by
-> licensed professionals to local code and inspected. The design defers to code and keeps
-> every life-safety system independent of the AI.
+> [!WARNING]
+> **Scope note.** This is an architecture and configuration blueprint. Electrical, generator,
+> solar/battery, gas, plumbing, egress, and life-safety work must be performed by licensed
+> professionals to local code and inspected. The design defers to code and keeps every
+> life-safety system independent of the AI.
+
+---
+
+<div align="center">
+<sub><code>&gt;_</code> &nbsp;HouseCommand — command your home like critical infrastructure.</sub>
+</div>

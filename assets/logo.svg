@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 260 244" width="260" height="244" role="img" aria-label="HouseCommand emblem">
+  <defs>
+    <radialGradient id="glow" cx="50%" cy="54%" r="58%">
+      <stop offset="0%" stop-color="#2f6bff" stop-opacity=".20"/>
+      <stop offset="100%" stop-color="#2f6bff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect x="2" y="2" width="256" height="240" rx="30" fill="#060912" stroke="#16223f" stroke-width="2"/>
+  <rect x="2" y="2" width="256" height="240" rx="30" fill="url(#glow)"/>
+  <g transform="translate(10,12)" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <!-- house shell -->
+    <path d="M28 108 L120 30 L212 108" stroke="#3f5da0" stroke-width="7"/>
+    <path d="M46 96 V170 M194 96 V170" stroke="#3f5da0" stroke-width="7"/>
+    <path d="M168 44 V70" stroke="#3f5da0" stroke-width="7" opacity=".9"/>
+    <!-- circuit traces -->
+    <path d="M92 128 H50 M92 150 H40 M92 172 H54" stroke="#2f6bff" stroke-width="4"/>
+    <path d="M148 128 H190 M148 150 H200 M148 172 H186" stroke="#2f6bff" stroke-width="4"/>
+    <path d="M120 96 V64 M120 78 L96 92 M120 78 L144 92" stroke="#2f6bff" stroke-width="4"/>
+    <!-- hexagonal core -->
+    <path d="M120 74 L166 100 L166 152 L120 178 L74 152 L74 100 Z"
+          stroke="#2f6bff" stroke-width="5" fill="#2f6bff" fill-opacity=".08"/>
+    <!-- terminal prompt >_ -->
+    <path d="M104 116 l16 12 l-16 12" stroke="#7aa8ff" stroke-width="6"/>
+    <rect x="126" y="140" width="20" height="7" rx="2.5" fill="#7aa8ff"/>
+    <!-- nodes -->
+    <g fill="#6aa2ff" stroke="none">
+      <circle cx="50" cy="128" r="5"/><circle cx="40" cy="150" r="5"/><circle cx="54" cy="172" r="5"/>
+      <circle cx="190" cy="128" r="5"/><circle cx="200" cy="150" r="5"/><circle cx="186" cy="172" r="5"/>
+      <circle cx="120" cy="60" r="6"/><circle cx="96" cy="92" r="5"/><circle cx="144" cy="92" r="5"/>
+    </g>
+  </g>
+</svg>
