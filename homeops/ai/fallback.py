@@ -16,13 +16,18 @@ def deterministic_response(world, goal: str, active_house: str) -> dict:
     op = Operator(kind="ai", active_house=active_house, name="local-fallback")
     g = goal.lower()
     actions = []
+    def _do(subsystem, target, action, args=None, label=""):
+        intent = Intent(active_house, subsystem, target, action, args or {})
+        r = world.router.execute(intent, op)
+        actions.append({"cmd": label or f"{subsystem}.{target} {action}", "status": r.status,
+                        "message": r.message, "level": r.level,
+                        "intent": {"house_id": active_house, "subsystem": subsystem,
+                                   "target": target, "action": action, "args": args or {}}})
     if "arm" in g and "night" in g:
-        r = world.router.execute(Intent(active_house, "alarm", "panel", "arm", {"mode": "night"}), op)
-        actions.append({"cmd": "arm night", "status": r.status, "message": r.message})
+        _do("alarm", "panel", "arm", {"mode": "night"}, "arm night")
     elif "lights off" in g or "all lights off" in g:
         for name in ("living_room", "kitchen"):
-            r = world.router.execute(Intent(active_house, "light", name, "turn_off"), op)
-            actions.append({"cmd": f"{name} off", "status": r.status, "message": r.message})
+            _do("light", name, "turn_off", label=f"{name} off")
     return {
         "mode": "fallback",
         "final": "AI advisor offline — local automations remain active; handled the goal deterministically where possible.",

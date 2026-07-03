@@ -39,6 +39,14 @@ to something that could safely run a real pilot home. Ordered by the S1→S2 sev
       maximal hardware-facing verification possible without actuation. The residual gap is
       irreducible in software: supervised actuation trials with a human at each device.
 
+- [x] **Part 10 — Resident chat + operational charter** (S2). Stateful back-and-forth
+      (`homeops/ai/session.py`, `cli ask`): conversation memory across turns, per-turn estate
+      snapshot, and an in-dialogue confirmation dance in which the token travels
+      engine -> resident -> engine and provably never enters the model's context (regression-tested
+      literally: issued tokens are asserted absent from every model call). The SYSTEM_PROMPT is now
+      a full operational charter: identity/purpose, chain of authority (the AI at the bottom),
+      permission ladder, confirmation protocol, epistemic conduct, scope & privacy.
+
 ## Not in scope for these parts (require the real world)
 - Independent security review / penetration test of the actuation plane.
 - Verified fail-safe on real heterogeneous hardware.

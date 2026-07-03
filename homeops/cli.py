@@ -2,6 +2,7 @@
 
     python -m homeops.cli status
     python -m homeops.cli command house_a light living_room turn_on
+    python -m homeops.cli ask [house_a]                       # resident chat (confirm/deny/house X/exit)
     python -m homeops.cli validate  deploy/deployment.yaml   # static, offline lint (exit 1 on fail)
     python -m homeops.cli preflight deploy/deployment.yaml   # read-only live commissioning checks
     python -m homeops.cli serve     deploy/deployment.yaml   # long-running service (systemd unit)
@@ -22,6 +23,54 @@ def status(world) -> None:
                 print("   " + sub + ": " + ", ".join(f"{e.name}={e.state}" for e in ents))
 
 
+def ask(world, house: str) -> int:
+    """Resident chat REPL. Uses the live Claude client when ANTHROPIC_API_KEY is set,
+    otherwise the deterministic fallback (still engine-gated, still audited)."""
+    import os
+    from .ai.session import ChatSession
+    client = None
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        try:
+            import anthropic
+            client = anthropic.Anthropic()
+        except ImportError:
+            print("(anthropic package missing — running on the deterministic fallback)")
+    session = ChatSession(world, client=client, active_house=house)
+    print(f"HouseCommand chat — active house: {house}. Commands: confirm [n] · deny [n] · house <id> · exit")
+    while True:
+        try:
+            line = input("you> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print()
+            return 0
+        if not line:
+            continue
+        low = line.lower()
+        if low in ("exit", "quit"):
+            return 0
+        if low.startswith("house "):
+            try:
+                session.switch_house(line.split(None, 1)[1])
+                print(f"(active house -> {session.active_house})")
+            except KeyError as e:
+                print(f"(unknown house {e})")
+            continue
+        if low.startswith(("confirm", "deny")):
+            parts = low.split()
+            idx = int(parts[1]) - 1 if len(parts) > 1 and parts[1].isdigit() else 0
+            r = session.confirm(idx) if parts[0] == "confirm" else session.deny(idx)
+            print(f"  -> {r['status']}: {r['message']}")
+            continue
+        out = session.ask(line)
+        for a in out.get("actions", []):
+            label = a.get("intent", {}).get("action") or a.get("cmd") or a.get("tool", "?")
+            print(f"  [{a.get('status','?')}] {label}: {a.get('message','')}")
+        if out.get("final"):
+            print(f"hc> {out['final']}")
+        for i, pnd in enumerate(out.get("pending", []), 1):
+            print(f"  ⏳ awaiting confirmation {i}: {pnd}   (type: confirm {i})")
+
+
 def main(argv: list[str]) -> int:
     world = build_world()
     if not argv or argv[0] == "status":
@@ -33,6 +82,8 @@ def main(argv: list[str]) -> int:
                                  Operator("owner", house, "cli"))
         print(f"{r.status}: {r.message}" + (f"  (confirm token: {r.confirm_token})" if r.confirm_token else ""))
         return 0
+    if argv[0] == "ask":
+        return ask(world, argv[1] if len(argv) > 1 else "house_a")
     if argv[0] in ("validate", "preflight", "serve") and len(argv) >= 2:
         from .deployment import load_deployment, validate_deployment, has_failures, render_results
         from .secrets import load_secrets

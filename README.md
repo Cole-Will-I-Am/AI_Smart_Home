@@ -95,6 +95,8 @@ pytest -q                              # 119 offline tests: permissions, router,
 python scripts/run_scenario.py all    # leak / grid-loss / fire-CO / intrusion / rogue-device
 python scripts/demo.py                # end-to-end: cross-house guard, WAN-down local-first, L4 refusal
 python -m homeops.cli status          # both houses at a glance
+python -m homeops.cli ask             # resident chat: memory, in-dialogue confirm/deny
+                                      #   (live Claude with ANTHROPIC_API_KEY; deterministic fallback without)
 ```
 
 The Claude ops layer (`homeops/ai/`, `claude-opus-4-8`, adaptive thinking, cached system prefix)
@@ -160,6 +162,7 @@ Adversarially reviewed (by a different LLM) and hardened; every row has a regres
 |---|---|
 | AI self-confirms a cross-house action | `confirm_cross_house` removed from the AI tool surface — a human must confirm |
 | Confirmation token replayed | tokens are unguessable, single-use, TTL-bounded, and bound to the **full intent + operator** |
+| Chat coaxes the model into confirming | tokens flow engine → resident → engine; tests assert issued tokens **never appear in the model's context** |
 | Spoofed leak event closes the main | two-signal rule re-reads **both** independent channels (wet sensor AND abnormal flow) at actuation time |
 | Rollback raced by a pending transition | rollback cancels in-flight physical transitions |
 | HTTP 200 treated as physical truth | safety-impacting actions are **verified by read-back**; unverified outcomes are recorded as such |
@@ -178,7 +181,7 @@ Adversarially reviewed (by a different LLM) and hardened; every row has a regres
 | `homeops/automations.py` | local-first automations (run below the AI) |
 | `homeops/audit.py` | tamper-evident hash-chained audit, JSONL persistence, `verify_chain()` |
 | `homeops/health.py` · `identity.py` | device heartbeat gate · RBAC principals/roles/scopes |
-| `homeops/ai/` | Claude ops layer: gated tools, prompts, deterministic fallback |
+| `homeops/ai/` | Claude ops layer: operational charter, gated tools, stateful resident chat (`session.py`), deterministic fallback |
 | `homeops/adapters/` | sim, Home Assistant, OPNsense, composite, per-property |
 | `homeops/simulator/` | both houses in software: devices, network, scenarios |
 | `homeops/portfolio.py` · `dashboard.py` | N-property control plane · HTML oversight view |
