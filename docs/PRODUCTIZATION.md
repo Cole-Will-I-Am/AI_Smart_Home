@@ -53,6 +53,17 @@ to something that could safely run a real pilot home. Ordered by the S1→S2 sev
       (a client is never inspected when WAN is down or AI-hold is set). The confirm-dance and
       token-absence invariants are regression-tested under BOTH vendors — authority is model-invariant.
 
+- [x] **Part 13 - Operational intelligence** (S2). A Home-SOC layer (`homeops/soc.py`): readiness
+      scoring (fail-closed on offline safety devices), incident correlation over the audit log,
+      health-drift early warning, and overnight state diff. And an estate digital twin
+      (`homeops/twin.py`): one queryable model unifying structure, live state, engine-derived
+      authority level, and a transparent (declared, not learned) risk weight rolled up per
+      device -> room -> subsystem -> house. Both are pure reducers - read-only, rebuildable, holding
+      no authority - an invariant bound to the safety case as SC-13. `cli soc` and `cli twin` render
+      them. Realizes the "operate the property" / "digital twin" theses from the strategy brief; the
+      remaining brief items (installer network, insurance, certified hardware, pricing) are
+      go-to-market, not repository work.
+
 ## Not in scope for these parts (require the real world)
 - Independent security review / penetration test of the actuation plane.
 - Verified fail-safe on real heterogeneous hardware.
