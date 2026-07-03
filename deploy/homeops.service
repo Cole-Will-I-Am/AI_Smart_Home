@@ -1,0 +1,29 @@
+# /etc/systemd/system/homeops.service
+[Unit]
+Description=homeops estate operations service (read-only surface; engine-gated actuation)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=homeops
+Group=homeops
+ExecStartPre=/usr/bin/python3 -m homeops.cli validate /etc/homeops/deployment.yaml
+ExecStart=/usr/bin/python3 -m homeops.cli serve /etc/homeops/deployment.yaml
+WorkingDirectory=/opt/homeops
+Restart=on-failure
+RestartSec=3
+# systemd-level hardening of the process itself
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/homeops
+PrivateTmp=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+MemoryDenyWriteExecute=yes
+CapabilityBoundingSet=
+
+[Install]
+WantedBy=multi-user.target

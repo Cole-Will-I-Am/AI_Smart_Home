@@ -1,0 +1,25 @@
+# homeops deployment descriptor — the one file an installer edits.
+# Lifecycle: `validate` (offline lint) -> `preflight` (read-only live checks) -> `serve`.
+# Secrets NEVER live here: they go in the 0600 secrets file below or the environment.
+deployment:
+  mode: sim                     # sim | real
+  houses_config: ../config/houses.example.yaml
+  audit_path: /var/lib/homeops/audit.jsonl    # REQUIRED in real mode (tamper-evident chain)
+  state_dir: /var/lib/homeops                 # heartbeat status.json lives here
+  dash_host: 127.0.0.1          # non-loopback binds REQUIRE HOMEOPS_DASH_TOKEN (fail-closed)
+  dash_port: 8787
+  tick_seconds: 2.0
+  verify_tls: true              # false only for self-signed appliances on a trusted VLAN
+  opnsense: false               # true -> OPN_* secrets become required
+  event_bridge: false           # true -> HA WebSocket bridge (needs websocket-client)
+  secrets_file: /etc/homeops/secrets.env
+
+  # real mode: EVERY controllable entity in EVERY house must be mapped explicitly —
+  # startup fails closed otherwise, so House A and B can never share a real device.
+  entity_map: {}
+  #   house_a.light.living_room: light.hc_a_living_room
+  #   house_b.light.living_room: light.hc_b_living_room
+
+  # real mode + event_bridge: HA entity -> local event translation
+  event_map: {}
+  #   binary_sensor.hc_a_leak_kitchen: {type: leak, house_id: house_a, when: "on"}
