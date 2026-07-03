@@ -34,6 +34,13 @@ class CommandRouter:
 
     def execute(self, intent: Intent, operator: Operator) -> Result:
         eng = self.engine
+
+        # Fail-closed on unknown property identifiers BEFORE any level/confirm logic, so a
+        # malformed or hostile house_id can never become a pending confirmation a human might
+        # approve (red team: test_unknown_house_*).
+        if intent.house_id not in self.state.houses:
+            return self._audit(intent, operator, "refused", f"unknown house {intent.house_id!r}", None)
+
         level = eng.level(intent.subsystem, intent.action)
 
         if level is None:
@@ -83,9 +90,6 @@ class CommandRouter:
 
         if not eng.allow_rate(intent):
             return self._audit(intent, operator, "refused", "rate limited", level)
-        if not eng.allow_cooldown(intent):
-            return self._audit(intent, operator, "refused",
-                               f"cooldown: {intent.subsystem}.{intent.action} actuated too recently", level)
 
         # Safety-critical health gate: never actuate a lock/valve/generator/HVAC-cutoff we can't
         # confirm is present and responsive.
@@ -95,6 +99,10 @@ class CommandRouter:
             if not self.health.healthy(intent.entity_id, eng.tick):
                 return self._audit(intent, operator, "refused",
                                    f"device {intent.entity_id} is {hstatus} — refusing safety-critical actuation", level)
+
+        if not eng.allow_cooldown(intent):
+            return self._audit(intent, operator, "refused",
+                               f"cooldown: {intent.subsystem}.{intent.action} actuated too recently", level)
 
         res = self.adapter.apply(intent)
         if not res.get("ok"):

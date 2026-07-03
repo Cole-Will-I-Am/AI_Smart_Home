@@ -3,6 +3,8 @@
     python -m homeops.cli status
     python -m homeops.cli command house_a light living_room turn_on
     python -m homeops.cli ask [house_a]                       # resident chat (confirm/deny/house X/exit)
+    python -m homeops.cli safety-case                        # run the safety case (claims -> live tests)
+    python -m homeops.cli certify <estate> <key> [deploy.yaml]  # signed commissioning certificate
     python -m homeops.cli validate  deploy/deployment.yaml   # static, offline lint (exit 1 on fail)
     python -m homeops.cli preflight deploy/deployment.yaml   # read-only live commissioning checks
     python -m homeops.cli serve     deploy/deployment.yaml   # long-running service (systemd unit)
@@ -93,6 +95,25 @@ def main(argv: list[str]) -> int:
         return 0
     if argv[0] == "ask":
         return ask(world, argv[1] if len(argv) > 1 else "house_a")
+    if argv[0] == "safety-case":
+        from .safety_case import verify_safety_case
+        rep = verify_safety_case(run="--fast" not in argv)
+        print(rep.render())
+        return 0 if rep.ok else 1
+    if argv[0] == "certify" and len(argv) >= 3:
+        from .certificate import issue_certificate, render_certificate, all_drills_passed
+        from .deployment import load_deployment, DeploymentConfig
+        import json as _json
+        estate, key = argv[1], argv[2]
+        dep = load_deployment(argv[3]) if len(argv) > 3 else DeploymentConfig()
+        cert = issue_certificate(world, dep, signing_key=key, estate=estate,
+                                 run_safety_case="--fast" not in argv)
+        print(render_certificate(cert))
+        out_path = f"certificate-{estate.replace(' ', '_').lower()}.json"
+        with open(out_path, "w") as f:
+            _json.dump({**cert.payload(), "signature": cert.signature}, f, indent=2)
+        print(f"\n  written: {out_path}  (verify with the same key)")
+        return 0 if (all_drills_passed(cert) and cert.safety_case_ok) else 1
     if argv[0] in ("validate", "preflight", "serve") and len(argv) >= 2:
         from .deployment import load_deployment, validate_deployment, has_failures, render_results
         from .secrets import load_secrets
