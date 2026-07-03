@@ -230,7 +230,7 @@ panel · UPS + NAS (ZFS) · WireGuard remote access.
 
 ## License
 
-**Copyright © 2026 Cole-Will-I-Am. All rights reserved.** This is **not** open-source software.
+**Copyright © 2026 Colton Williams. All rights reserved.** This is **not** open-source software.
 The repository is public for viewing, but no rights are granted: you may not copy, modify,
 redistribute, deploy, or use the Work commercially without prior written permission. Public
 visibility and reserved rights are orthogonal — absent an explicit grant, copyright's default is
