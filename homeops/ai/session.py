@@ -14,10 +14,18 @@ resident -> engine and never through the model: no token ever enters the AI's co
 tool result, not as text. Offline / AI-hold, the session degrades to the deterministic fallback
 exactly like OpsLayer — pending confirmations remain resident-actionable because `confirm()`
 never involves the model at all.
+
+Part 15: an optional DelegationRegistry adds a third path. When the AI's proposal comes back
+`confirm_required` and a standing certificate covers it, `try_delegated_execute` performs the
+token dance ENGINE-SIDE under the grantor's identity, and the model simply sees an executed
+tool result naming the certificate — still no token in its context. Everything a delegation
+does not cover falls through to the ordinary pending path above; the deterministic-fallback
+path is unchanged (its pendings carry no structured intent to match against).
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
 
+from ..delegations import DelegationRegistry, try_delegated_execute
 from ..permissions import Intent, Operator
 from .fallback import deterministic_response
 from .ops_layer import MODEL, OpsLayer
@@ -43,7 +51,7 @@ class PendingConfirmation:
 class ChatSession:
     def __init__(self, world, client=None, model: str | None = None, active_house: str = "house_a",
                  operator: Operator | None = None, max_tool_turns: int = 6,
-                 max_history_turns: int = 10) -> None:
+                 max_history_turns: int = 10, delegations: DelegationRegistry | None = None) -> None:
         self.world = world
         self.ops = OpsLayer(world, client=client, model=model)
         self.client = client
@@ -53,6 +61,7 @@ class ChatSession:
         assert self.operator.kind != "ai", "confirmations must belong to a human operator"
         self.max_tool_turns = max_tool_turns
         self.max_history_turns = max_history_turns
+        self.delegations = delegations
         self.messages: list[dict] = []
         self._turn_starts: list[int] = []      # message index where each ask() began (for whole-turn trimming)
         self.pending: list[PendingConfirmation] = []
@@ -107,6 +116,18 @@ class ChatSession:
             results = []
             for tc in comp.tool_calls:
                 out = self.ops._run_tool(tc.name, tc.input, self.active_house)
+                # Part 15: a standing delegation may cover this proposal. The dance happens
+                # engine-side under the grantor's identity; the model only sees the outcome.
+                if (tc.name == "propose_command" and self.delegations is not None
+                        and out.get("status") == "confirm_required"):
+                    src = tc.input
+                    intent = Intent(house_id=src.get("house_id", self.active_house),
+                                    subsystem=src["subsystem"], target=src["target"],
+                                    action=src["action"], args=dict(src.get("args") or {}))
+                    d_res, d = try_delegated_execute(self.world, intent, self.delegations)
+                    if d_res is not None:
+                        out = {"status": d_res.status, "level": d_res.level, "delegation": d.id,
+                               "message": f"executed under standing delegation {d.id}: {d_res.message}"}
                 out.pop("confirm_token", None)   # belt-and-braces: the engine already issues none to "ai"
                 if tc.name in ("propose_command", "recommend"):
                     entry = {"tool": tc.name, **out}
