@@ -131,5 +131,5 @@ def test_history_trims_whole_turns_only(world):
 
 def test_human_operator_required(world):
     import pytest
-    with pytest.raises(AssertionError):
+    with pytest.raises(ValueError):
         ChatSession(world, operator=Operator(kind="ai", active_house="house_a", name="sneaky"))

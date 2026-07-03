@@ -101,13 +101,24 @@ class DelegationRegistry:
         self.clock = clock or datetime.now
         self._delegations: dict[str, Delegation] = {}
 
-    def grant(self, d: Delegation) -> Delegation:
+    def grant(self, d: Delegation, by: Operator) -> Delegation:
+        """Admit a certificate — after checking BOTH the action (delegable level) and the
+        GRANTOR's authority (review finding R-3): only an owner whose property scope covers
+        the house and whose role cap admits the action may mint standing consent. Without
+        this, whoever can call grant() mints owner-level authority."""
         lvl = ACTION_LEVELS.get((d.subsystem, d.action))
         if lvl is None:
             raise ValueError(f"cannot delegate unknown action {d.subsystem}.{d.action}")
         if lvl > DELEGABLE_MAX_LEVEL:
             raise ValueError(
                 f"L{lvl} is not delegable — standing consent stops at L{DELEGABLE_MAX_LEVEL}")
+        if by is None or getattr(by, "kind", None) != "owner":
+            raise PermissionError(
+                f"only an owner may grant standing consent (grantor kind={getattr(by, 'kind', None)!r})")
+        if by.houses != "*" and d.house_id not in by.houses:
+            raise PermissionError(f"grantor {by.name or 'owner'!r} has no authority over {d.house_id}")
+        if by.max_level is not None and lvl > by.max_level:
+            raise PermissionError(f"grantor role caps at L{by.max_level}; cannot delegate an L{lvl} action")
         self._delegations[d.id] = d
         return d
 

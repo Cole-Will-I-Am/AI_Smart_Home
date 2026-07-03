@@ -12,7 +12,9 @@ import pytest
 from homeops import build_world
 from homeops.ai.session import ChatSession
 from homeops.delegations import Delegation, DelegationRegistry, try_delegated_execute
-from homeops.permissions import Intent
+from homeops.permissions import Intent, Operator
+
+OWNER = Operator("owner", "house_a", name="colton")
 
 
 def at(hour, day=15):
@@ -26,7 +28,7 @@ def lock_intent(target="front_door"):
 def night_registry(hour=23, **kw):
     reg = DelegationRegistry(clock=at(hour))
     reg.grant(Delegation(id="d-nightlock", grantor="colton", house_id="house_a",
-                         subsystem="lock", action="lock", window=(21, 2), **kw))
+                         subsystem="lock", action="lock", window=(21, 2), **kw), OWNER)
     return reg
 
 
@@ -36,10 +38,10 @@ def test_l3_and_unknown_actions_are_not_delegable():
     reg = DelegationRegistry()
     with pytest.raises(ValueError):
         reg.grant(Delegation(id="x", grantor="c", house_id="house_a",
-                             subsystem="generator", action="start"))        # L3: per-act only
+                             subsystem="generator", action="start"), OWNER)        # L3: per-act only
     with pytest.raises(ValueError):
         reg.grant(Delegation(id="y", grantor="c", house_id="house_a",
-                             subsystem="frobnicator", action="engage"))     # unknown: fail-closed
+                             subsystem="frobnicator", action="engage"), OWNER)     # unknown: fail-closed
 
 
 def test_window_wraps_midnight():
@@ -78,7 +80,7 @@ def test_args_envelope_on_the_delegation_itself():
     reg = DelegationRegistry(clock=at(18))
     reg.grant(Delegation(id="d-eve-temp", grantor="colton", house_id="house_a",
                          subsystem="climate", action="set_temperature",
-                         window=(17, 22), args_within={"temperature": (66, 72)}))
+                         window=(17, 22), args_within={"temperature": (66, 72)}), OWNER)
     ok = Intent("house_a", "climate", "thermostat_main", "set_temperature", {"temperature": 68})
     res, d = try_delegated_execute(w, ok, reg)
     assert res is not None and res.ok and d.id == "d-eve-temp"
@@ -92,7 +94,7 @@ def test_semantic_invariants_outrank_standing_consent():
     w.router.clock = at(18)
     reg = DelegationRegistry(clock=at(18))
     reg.grant(Delegation(id="d-any-temp", grantor="colton", house_id="house_a",
-                         subsystem="climate", action="set_temperature"))
+                         subsystem="climate", action="set_temperature"), OWNER)
     cold = Intent("house_a", "climate", "thermostat_main", "set_temperature", {"temperature": 45})
     assert try_delegated_execute(w, cold, reg)[0] is None
 

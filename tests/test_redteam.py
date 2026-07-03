@@ -148,3 +148,74 @@ def test_destructive_action_cannot_be_hammered(bare):
     retry = Intent("house_a", "generator", "main", "start", confirm_token=second.confirm_token)
     r2 = bare.router.execute(retry, OWNER())
     assert r2.status == "refused" and "cooldown" in r2.message
+
+
+# --- Review findings R-2/R-3: rollback authority + delegation grant authority ------------
+from homeops.delegations import Delegation, DelegationRegistry
+
+
+def _unlock_with_dance(bare):
+    """Owner performs the full two-step unlock; returns (owner, rollback_token)."""
+    op = Operator("owner", "house_a")
+    i = Intent("house_a", "lock", "front_door", "unlock")
+    r1 = bare.router.execute(i, op)
+    i.confirm_token = r1.confirm_token
+    r2 = bare.router.execute(i, op)
+    assert r2.status == "executed" and r2.rollback_token
+    return op, r2.rollback_token
+
+
+def test_rollback_without_operator_is_refused(bare):
+    _, tok = _unlock_with_dance(bare)
+    assert bare.router.rollback(tok) is False
+    assert bare.state.get_state("house_a.lock.front_door") == "unlocked"   # nothing actuated
+
+
+def test_ai_cannot_rollback_an_L2_action(bare):
+    op, tok = _unlock_with_dance(bare)
+    assert bare.router.rollback(tok, Operator("ai", "house_a", "ai-ops")) is False
+    assert bare.router.rollback(tok, op) is True          # the human still can
+    assert bare.state.get_state("house_a.lock.front_door") == "locked"
+
+
+def test_guest_cannot_rollback_an_L2_action(bare):
+    _, tok = _unlock_with_dance(bare)
+    assert bare.router.rollback(tok, Operator("guest", "house_a", "visitor")) is False
+
+
+def test_rollback_token_is_single_use(bare):
+    op = Operator("owner", "house_a")
+    r = bare.router.execute(Intent("house_a", "light", "living_room", "turn_on"), op)
+    assert bare.router.rollback(r.rollback_token, op) is True
+    assert bare.router.rollback(r.rollback_token, op) is False   # consumed
+
+
+def test_confirm_required_inverse_is_not_rollbackable(bare):
+    """Undoing lock.lock IS an unlock; unlock demands the ceremony, so the bool API refuses."""
+    op, tok = _unlock_with_dance(bare)                     # door now unlocked
+    i = Intent("house_a", "lock", "front_door", "lock")
+    r = bare.router.execute(i, op)                         # L2, not confirm-required: executes
+    assert r.status == "executed" and r.rollback_token
+    assert bare.router.rollback(r.rollback_token, op) is False
+    assert bare.state.get_state("house_a.lock.front_door") == "locked"
+    assert any(rec.status == "refused" and "first-class intent" in rec.message
+               for rec in bare.audit.records)
+
+
+def test_delegation_grant_requires_an_owner():
+    reg = DelegationRegistry()
+    d = Delegation(id="d", grantor="mallory", house_id="house_a", subsystem="lock", action="lock")
+    for kind in ("ai", "guest", "system"):
+        with pytest.raises(PermissionError):
+            reg.grant(d, Operator(kind, "house_a", kind))
+    assert len(reg) == 0
+
+
+def test_delegation_grant_respects_scope_and_role_cap():
+    reg = DelegationRegistry()
+    d = Delegation(id="d", grantor="colton", house_id="house_a", subsystem="lock", action="lock")
+    with pytest.raises(PermissionError):
+        reg.grant(d, Operator("owner", "house_b", "b-owner", houses={"house_b"}))
+    with pytest.raises(PermissionError):
+        reg.grant(d, Operator("owner", "house_a", "limited", max_level=1))
+    assert reg.grant(d, Operator("owner", "house_a", "colton")) is d

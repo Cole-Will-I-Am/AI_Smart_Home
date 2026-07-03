@@ -89,11 +89,16 @@ class AuditLog:
             raise ValueError(f"audit log at {self._path} failed integrity check at record {bad}")
 
     # --- rollback registry ---------------------------------------------------
-    def register_rollback(self, token: str, undo: dict[str, Any]) -> None:
-        self._rollback[token] = undo
+    def register_rollback(self, token: str, undo: dict[str, Any], meta: dict | None = None) -> None:
+        self._rollback[token] = {"undo": undo, "meta": dict(meta or {})}
 
     def rollback(self, token: str) -> dict[str, Any] | None:
+        """Look up a rollback entry {'undo':..., 'meta':...} WITHOUT consuming it."""
         return self._rollback.get(token)
+
+    def consume_rollback(self, token: str) -> None:
+        """Rollback tokens are single-use: consumed by the router before actuation."""
+        self._rollback.pop(token, None)
 
     # --- reads ---------------------------------------------------------------
     @property

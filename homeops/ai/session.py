@@ -58,7 +58,8 @@ class ChatSession:
         self.active_house = active_house
         # the HUMAN principal on whose behalf confirmations execute — never kind="ai"
         self.operator = operator or Operator(kind="owner", active_house=active_house, name="resident")
-        assert self.operator.kind != "ai", "confirmations must belong to a human operator"
+        if self.operator.kind == "ai":   # a raise, not an assert: must survive python -O
+            raise ValueError("confirmations must belong to a human operator")
         self.max_tool_turns = max_tool_turns
         self.max_history_turns = max_history_turns
         self.delegations = delegations

@@ -82,6 +82,20 @@ EXPECTED_STATE: dict[tuple[str, str], set] = {
 # `system` operators (local automations, running below the AI with reviewed hard-coded values)
 # are exempt — an emergency response must never be blockable by a comfort envelope.
 
+# Rolling back an action is semantically PERFORMING its inverse verb, so the router gates a
+# rollback at the authority of that inverse (review finding R-2). Actions not listed here are
+# pure state restores and gate at their own level.
+ROLLBACK_INVERSE: dict[tuple[str, str], tuple[str, str]] = {
+    ("light", "turn_on"): ("light", "turn_off"), ("light", "turn_off"): ("light", "turn_on"),
+    ("plug", "turn_on"): ("plug", "turn_off"), ("plug", "turn_off"): ("plug", "turn_on"),
+    ("cover", "open"): ("cover", "close"), ("cover", "close"): ("cover", "open"),
+    ("lock", "lock"): ("lock", "unlock"), ("lock", "unlock"): ("lock", "lock"),
+    ("garage", "open"): ("garage", "close"), ("garage", "close"): ("garage", "open"),
+    ("alarm", "arm"): ("alarm", "disarm"), ("alarm", "disarm"): ("alarm", "arm"),
+    ("water", "shutoff_main"): ("water", "open_main"), ("water", "open_main"): ("water", "shutoff_main"),
+    ("water", "irrigation_on"): ("water", "irrigation_off"), ("water", "irrigation_off"): ("water", "irrigation_on"),
+}
+
 QUIET_HOURS = (22, 7)   # announcements in 22:00–06:59 require a human
 
 
@@ -178,6 +192,9 @@ class PermissionEngine:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, default=str).encode()).hexdigest()
 
     def issue_token(self, intent: Intent, operator: "Operator", ttl: int = 5) -> str:
+        # hygiene: sweep expired, never-consumed tokens so the table cannot grow without bound
+        if self._tokens:
+            self._tokens = {t: ke for t, ke in self._tokens.items() if ke[1] >= self.tick}
         tok = secrets.token_urlsafe(16)   # unguessable
         self._tokens[tok] = (self._key(intent, operator), self.tick + ttl)
         return tok

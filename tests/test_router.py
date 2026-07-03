@@ -15,7 +15,7 @@ def test_rate_limit(bare):
 def test_rollback(bare):
     r = bare.router.execute(Intent("house_a", "light", "living_room", "turn_on"), owner())
     assert bare.state.get_state("house_a.light.living_room") == "on" and r.rollback_token
-    assert bare.router.rollback(r.rollback_token) is True
+    assert bare.router.rollback(r.rollback_token, owner()) is True
     assert bare.state.get_state("house_a.light.living_room") == "off"
 
 

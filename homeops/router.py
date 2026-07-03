@@ -15,7 +15,7 @@ from datetime import datetime
 
 from .permissions import (
     PermissionEngine, Intent, Operator, Result, CONFIRM_REQUIRED, SAFETY_CRITICAL, EXPECTED_STATE,
-    semantic_violation,
+    ROLLBACK_INVERSE, semantic_violation,
 )
 from .audit import AuditLog, AuditRecord
 from .adapters.base import Adapter
@@ -142,7 +142,9 @@ class CommandRouter:
         rollback = None
         if res.get("undo"):
             rollback = f"rb-{eng.tick}-{intent.subsystem}-{intent.target}-{len(self.audit.records)}"
-            self.audit.register_rollback(rollback, res["undo"])
+            self.audit.register_rollback(rollback, res["undo"], meta={
+                "house_id": intent.house_id, "subsystem": intent.subsystem,
+                "target": intent.target, "action": intent.action, "level": level})
         return self._audit(intent, operator, "executed", res["message"], level, rollback=rollback)
 
     def recommend(self, house_id: str, message: str, operator: Operator, level: int = 4) -> Result:
@@ -152,15 +154,56 @@ class CommandRouter:
         )
 
     def rollback(self, token: str, operator: Operator | None = None) -> bool:
-        undo = self.audit.rollback(token)
-        ok = undo is not None
-        if ok:
-            self.adapter.undo(undo)
+        """Authority-gated undo (review finding R-2). A rollback IS the inverse actuation, so
+        it faces the authority of that inverse verb: an operator is required (fail-closed),
+        RBAC scope and role caps apply, guests stop at L1, the AI is barred from L2+,
+        confirm-required inverses must be re-issued as first-class intents (this bool API
+        cannot carry the token dance), safety-critical inverses are health-gated, and the
+        rollback token is single-use — consumed before actuation."""
+        entry = self.audit.rollback(token)
+
+        def refuse(msg: str, meta: dict | None = None, level=None) -> bool:
+            m = meta or {}
+            self.audit.record(AuditRecord(
+                tick=self.engine.tick, operator=(operator.kind if operator else "unknown"),
+                house_id=m.get("house_id", "n/a"), subsystem=m.get("subsystem", "advisory"),
+                target=m.get("target", "rollback"), action="rollback",
+                args={"token": token}, level=level, status="refused", message=msg))
+            return False
+
+        if entry is None:
+            return refuse("rollback: unknown token")
+        undo, meta = entry["undo"], entry["meta"]
+        if operator is None:
+            return refuse("rollback requires an authenticated operator")
+        orig = (meta.get("subsystem"), meta.get("action"))
+        inverse = ROLLBACK_INVERSE.get(orig, orig)
+        levels = [lv for lv in (meta.get("level"), self.engine.level(*inverse)) if lv is not None]
+        if not levels:
+            return refuse("rollback: cannot establish an authority level — failing closed", meta)
+        eff = max(levels)
+        house = meta.get("house_id", "n/a")
+        if operator.houses != "*" and house not in operator.houses:
+            return refuse(f"property {house} is out of scope for operator {operator.name}", meta, eff)
+        if operator.kind == "guest" and eff > 1:
+            return refuse("guest operator limited to Level 1", meta, eff)
+        if operator.max_level is not None and eff > operator.max_level:
+            return refuse(f"rollback level L{eff} exceeds operator role (max L{operator.max_level})", meta, eff)
+        if operator.kind == "ai" and eff >= 2:
+            return refuse("AI may not roll back an L2+ action — a human must", meta, eff)
+        if inverse in CONFIRM_REQUIRED:
+            return refuse(f"rollback would perform {inverse[0]}.{inverse[1]}, which requires "
+                          f"confirmation — issue it as a first-class intent", meta, eff)
+        entity_id = f"{house}.{meta.get('subsystem')}.{meta.get('target')}"
+        if self.health is not None and inverse in SAFETY_CRITICAL \
+                and not self.health.healthy(entity_id, self.engine.tick):
+            return refuse(f"device {entity_id} is {self.health.status(entity_id, self.engine.tick)} "
+                          f"— refusing safety-critical rollback", meta, eff)
+        self.audit.consume_rollback(token)   # single-use
+        self.adapter.undo(undo)
         self.audit.record(AuditRecord(
-            tick=self.engine.tick, operator=(operator.kind if operator else "system"),
-            house_id="n/a", subsystem="advisory", target="rollback", action="rollback",
-            args={"token": token}, level=None,
-            status="rollback" if ok else "refused",
-            message="rollback applied" if ok else "rollback: unknown token",
-        ))
-        return ok
+            tick=self.engine.tick, operator=operator.kind, house_id=house,
+            subsystem=meta.get("subsystem", "advisory"), target=meta.get("target", "rollback"),
+            action="rollback", args={"token": token, "inverse": f"{inverse[0]}.{inverse[1]}"},
+            level=eff, status="rollback", message=f"rollback applied (= {inverse[0]}.{inverse[1]})"))
+        return True
