@@ -35,7 +35,16 @@ def ask(world, house: str) -> int:
             client = anthropic.Anthropic()
         except ImportError:
             print("(anthropic package missing — running on the deterministic fallback)")
-    session = ChatSession(world, client=client, active_house=house)
+    elif os.environ.get("OPENAI_API_KEY"):
+        try:
+            import openai
+            client = openai.OpenAI()
+        except ImportError:
+            print("(openai package missing — running on the deterministic fallback)")
+    session = ChatSession(world, client=client, active_house=house,
+                          model=os.environ.get("HOMEOPS_AI_MODEL"))
+    if client is not None:
+        print(f"(model: {session.provider.name}/{session.model})")
     print(f"HouseCommand chat — active house: {house}. Commands: confirm [n] · deny [n] · house <id> · exit")
     while True:
         try:

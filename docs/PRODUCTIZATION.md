@@ -47,6 +47,12 @@ to something that could safely run a real pilot home. Ordered by the S1→S2 sev
       a full operational charter: identity/purpose, chain of authority (the AI at the bottom),
       permission ladder, confirmation protocol, epistemic conduct, scope & privacy.
 
+- [x] **Part 11 — Model-agnostic providers** (S2). `homeops/ai/providers.py`: the ops layer keeps a
+      neutral transcript; providers translate to vendor wire formats (Anthropic content blocks /
+      OpenAI chat-completions tool calling). Lazy client resolution preserves the offline contract
+      (a client is never inspected when WAN is down or AI-hold is set). The confirm-dance and
+      token-absence invariants are regression-tested under BOTH vendors — authority is model-invariant.
+
 ## Not in scope for these parts (require the real world)
 - Independent security review / penetration test of the actuation plane.
 - Verified fail-safe on real heterogeneous hardware.

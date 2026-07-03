@@ -20,7 +20,7 @@ from dataclasses import dataclass, field
 
 from ..permissions import Intent, Operator
 from .fallback import deterministic_response
-from .ops_layer import MODEL, OpsLayer, _block_field
+from .ops_layer import MODEL, OpsLayer
 from .prompts import SYSTEM_PROMPT, render_snapshot
 from .tools import TOOLS
 
@@ -41,13 +41,12 @@ class PendingConfirmation:
 
 
 class ChatSession:
-    def __init__(self, world, client=None, model: str = MODEL, active_house: str = "house_a",
+    def __init__(self, world, client=None, model: str | None = None, active_house: str = "house_a",
                  operator: Operator | None = None, max_tool_turns: int = 6,
                  max_history_turns: int = 10) -> None:
         self.world = world
         self.ops = OpsLayer(world, client=client, model=model)
         self.client = client
-        self.model = model
         self.active_house = active_house
         # the HUMAN principal on whose behalf confirmations execute — never kind="ai"
         self.operator = operator or Operator(kind="owner", active_house=active_house, name="resident")
@@ -58,6 +57,14 @@ class ChatSession:
         self._turn_starts: list[int] = []      # message index where each ask() began (for whole-turn trimming)
         self.pending: list[PendingConfirmation] = []
         self._notes: list[str] = []            # human-side outcomes to surface to the model next turn
+
+    @property
+    def provider(self):
+        return self.ops.provider
+
+    @property
+    def model(self) -> str:
+        return self.ops.model
 
     # ---- resident turn ---------------------------------------------------------
     def ask(self, text: str) -> dict:
@@ -78,41 +85,36 @@ class ChatSession:
         if self.pending:
             pend = "AWAITING RESIDENT CONFIRMATION:\n" + "\n".join(
                 f"  {i + 1}. {p.describe()}" for i, p in enumerate(self.pending)) + "\n\n"
-        self.messages.append({"role": "user", "content":
+        self.messages.append({"role": "user", "text":
                               f"{render_snapshot(self.world, self.active_house)}\n\n{notes}{pend}"
                               f"RESIDENT: {text}"})
 
-        system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
         actions: list[dict] = []
         final_text = ""
         for _ in range(self.max_tool_turns):
-            resp = self.client.messages.create(model=self.model, max_tokens=2048,
-                                               thinking={"type": "adaptive"},
-                                               system=system, tools=TOOLS, messages=self.messages)
-            if getattr(resp, "stop_reason", None) == "refusal":
+            comp = self.provider.complete(model=self.model, system=SYSTEM_PROMPT,
+                                          tools=TOOLS, transcript=self.messages)
+            if comp.stop == "refusal":
                 return {"mode": "ai", "final": "request refused by safety classifier",
                         "actions": actions, "pending": [p.describe() for p in self.pending], "refusal": True}
-            content = list(getattr(resp, "content", []))
-            tool_uses = [b for b in content if _block_field(b, "type") == "tool_use"]
-            for b in content:
-                if _block_field(b, "type") == "text":
-                    final_text = _block_field(b, "text", "") or final_text
-            self.messages.append({"role": "assistant", "content": content})
-            if not tool_uses:
+            if comp.text:
+                final_text = comp.text
+            self.messages.append({"role": "assistant", "text": comp.text,
+                                  "tool_calls": [{"id": t.id, "name": t.name, "input": t.input}
+                                                 for t in comp.tool_calls]})
+            if not comp.tool_calls:
                 break
             results = []
-            for tu in tool_uses:
-                name = _block_field(tu, "name")
-                out = self.ops._run_tool(name, _block_field(tu, "input", {}) or {}, self.active_house)
+            for tc in comp.tool_calls:
+                out = self.ops._run_tool(tc.name, tc.input, self.active_house)
                 out.pop("confirm_token", None)   # belt-and-braces: the engine already issues none to "ai"
-                if name in ("propose_command", "recommend"):
-                    entry = {"tool": name, **out}
-                    if name == "propose_command":
-                        entry["intent"] = dict(_block_field(tu, "input", {}) or {})
+                if tc.name in ("propose_command", "recommend"):
+                    entry = {"tool": tc.name, **out}
+                    if tc.name == "propose_command":
+                        entry["intent"] = dict(tc.input)
                     actions.append(entry)
-                results.append({"type": "tool_result", "tool_use_id": _block_field(tu, "id"),
-                                "content": str(out)})
-            self.messages.append({"role": "user", "content": results})
+                results.append({"id": tc.id, "name": tc.name, "output": out})
+            self.messages.append({"role": "tools", "results": results})
         self._register_pending(actions)
         return {"mode": "ai", "final": final_text, "actions": actions,
                 "pending": [p.describe() for p in self.pending]}

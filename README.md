@@ -12,6 +12,7 @@
 ![tests](https://img.shields.io/badge/tests-119%20passed-2ea043?labelColor=0b1c40)
 ![core](https://img.shields.io/badge/core-stdlib--only-2f6bff?labelColor=0b1c40)
 ![cloud](https://img.shields.io/badge/cloud-none%20required-2f6bff?labelColor=0b1c40)
+![models](https://img.shields.io/badge/models-Claude%20%C2%B7%20GPT-2f6bff?labelColor=0b1c40)
 ![status](https://img.shields.io/badge/status-reference%20implementation-d29922?labelColor=0b1c40)
 
 [**DESIGN.md**](DESIGN.md) · [**Strategy**](docs/STRATEGY.md) · [**Productization**](docs/PRODUCTIZATION.md) · [**housecommand.manticthink.com**](https://housecommand.manticthink.com)
@@ -40,7 +41,7 @@ flowchart TD
     P["📱 Phone — HA Companion"] --> I
     V["🎙 Voice — HA Assist (local)"] --> I
     C["⌨️ CLI / dashboard"] --> I
-    AI["🤖 Claude ops layer — proposes only"] --> I
+    AI["🤖 AI ops layer (Claude / GPT) — proposes only"] --> I
     I{{"Intent — house · subsystem · target · action · operator"}}
     I --> E["Permission engine L0–L5 — RBAC · confirm tokens · cooldowns · health gate"]
     E -- "refuse / recommend-only (L4–L5)" --> X[("hash-chained audit")]
@@ -96,7 +97,7 @@ python scripts/run_scenario.py all    # leak / grid-loss / fire-CO / intrusion /
 python scripts/demo.py                # end-to-end: cross-house guard, WAN-down local-first, L4 refusal
 python -m homeops.cli status          # both houses at a glance
 python -m homeops.cli ask             # resident chat: memory, in-dialogue confirm/deny
-                                      #   (live Claude with ANTHROPIC_API_KEY; deterministic fallback without)
+                                      #   (ANTHROPIC_API_KEY -> Claude, OPENAI_API_KEY -> GPT, neither -> deterministic fallback)
 ```
 
 The Claude ops layer (`homeops/ai/`, `claude-opus-4-8`, adaptive thinking, cached system prefix)
@@ -163,6 +164,7 @@ Adversarially reviewed (by a different LLM) and hardened; every row has a regres
 | AI self-confirms a cross-house action | `confirm_cross_house` removed from the AI tool surface — a human must confirm |
 | Confirmation token replayed | tokens are unguessable, single-use, TTL-bounded, and bound to the **full intent + operator** |
 | Chat coaxes the model into confirming | tokens flow engine → resident → engine; tests assert issued tokens **never appear in the model's context** |
+| Model swapped for a different vendor | authority is model-invariant: providers translate wire formats only — Claude and GPT face the same engine, tools, and absent token (proven under both in tests) |
 | Spoofed leak event closes the main | two-signal rule re-reads **both** independent channels (wet sensor AND abnormal flow) at actuation time |
 | Rollback raced by a pending transition | rollback cancels in-flight physical transitions |
 | HTTP 200 treated as physical truth | safety-impacting actions are **verified by read-back**; unverified outcomes are recorded as such |
@@ -181,7 +183,7 @@ Adversarially reviewed (by a different LLM) and hardened; every row has a regres
 | `homeops/automations.py` | local-first automations (run below the AI) |
 | `homeops/audit.py` | tamper-evident hash-chained audit, JSONL persistence, `verify_chain()` |
 | `homeops/health.py` · `identity.py` | device heartbeat gate · RBAC principals/roles/scopes |
-| `homeops/ai/` | Claude ops layer: operational charter, gated tools, stateful resident chat (`session.py`), deterministic fallback |
+| `homeops/ai/` | model-agnostic ops layer (`providers.py`: Claude native, GPT via chat-completions): operational charter, gated tools, stateful resident chat (`session.py`), deterministic fallback |
 | `homeops/adapters/` | sim, Home Assistant, OPNsense, composite, per-property |
 | `homeops/simulator/` | both houses in software: devices, network, scenarios |
 | `homeops/portfolio.py` · `dashboard.py` | N-property control plane · HTML oversight view |

@@ -1,19 +1,21 @@
-"""The Claude ops layer: a manual tool-use loop that PROPOSES engine-gated commands.
+"""The AI ops layer: a provider-agnostic tool-use loop that PROPOSES engine-gated commands.
 
-Model `claude-opus-4-8`, adaptive thinking, a frozen cached system prefix, and the volatile
-two-house snapshot in the user turn. Claude proposes via dedicated tools; the permission engine
-executes/refuses. When the API/internet is unavailable or the house is on AI-hold, it degrades to
-the deterministic fallback — the house is never in the AI's hands for safety.
+Works with Claude (native) or GPT via homeops.ai.providers; the loop itself stores a neutral
+transcript and never touches a vendor wire format. Whatever the model, it proposes via dedicated
+tools and the permission engine executes/refuses. When the API/internet is unavailable or the
+house is on AI-hold, it degrades to the deterministic fallback — the house is never in the AI's
+hands for safety.
 """
 from __future__ import annotations
 from typing import Any
 
 from ..permissions import Intent, Operator
-from .prompts import SYSTEM_PROMPT, render_snapshot
-from .tools import TOOLS
 from .fallback import deterministic_response
+from .prompts import SYSTEM_PROMPT, render_snapshot
+from .providers import as_provider
+from .tools import TOOLS
 
-MODEL = "claude-opus-4-8"
+MODEL = "claude-opus-4-8"   # kept for backward compatibility; providers carry their own defaults
 
 
 def _block_field(block: Any, field: str, default=None):
@@ -23,10 +25,31 @@ def _block_field(block: Any, field: str, default=None):
 
 
 class OpsLayer:
-    def __init__(self, world, client: Any = None, model: str = MODEL) -> None:
+    def __init__(self, world, client: Any = None, model: str | None = None) -> None:
         self.world = world
         self.client = client
-        self.model = model
+        self._explicit_model = model
+        self._provider = None
+
+    @property
+    def provider(self):
+        """Resolved lazily: a client is never inspected unless the AI path is actually taken
+        (the offline/AI-hold gates must work even with a broken or bogus client)."""
+        if self.client is None:
+            return None
+        if self._provider is None:
+            self._provider = as_provider(self.client)
+        return self._provider
+
+    @property
+    def model(self) -> str:
+        if self._explicit_model:
+            return self._explicit_model
+        try:
+            p = self.provider
+        except TypeError:
+            return MODEL
+        return p.default_model if p else MODEL
 
     # --- tool execution ------------------------------------------------------
     def _run_tool(self, name: str, args: dict, active_house: str) -> dict:
@@ -58,40 +81,32 @@ class OpsLayer:
         house = w.houses[active_house]
         if self.client is None or not house.wan_up or house.ai_hold:
             return deterministic_response(w, goal, active_house)
+        provider = self.provider   # resolved only now, past the offline gates
 
-        system = [{"type": "text", "text": SYSTEM_PROMPT, "cache_control": {"type": "ephemeral"}}]
-        user = f"{render_snapshot(w, active_house)}\n\nGOAL: {goal}"
-        messages: list[dict] = [{"role": "user", "content": user}]
+        transcript: list[dict] = [{"role": "user",
+                                   "text": f"{render_snapshot(w, active_house)}\n\nGOAL: {goal}"}]
         actions: list[dict] = []
         final_text = ""
 
         for _ in range(max_turns):
-            resp = self.client.messages.create(
-                model=self.model, max_tokens=2048,
-                thinking={"type": "adaptive"},
-                system=system, tools=TOOLS, messages=messages,
-            )
-            if getattr(resp, "stop_reason", None) == "refusal":
-                return {"mode": "ai", "final": "request refused by safety classifier", "actions": actions,
-                        "refusal": True}
-
-            content = list(getattr(resp, "content", []))
-            tool_uses = [b for b in content if _block_field(b, "type") == "tool_use"]
-            for b in content:
-                if _block_field(b, "type") == "text":
-                    final_text = _block_field(b, "text", "") or final_text
-
-            if not tool_uses:
+            comp = provider.complete(model=self.model, system=SYSTEM_PROMPT,
+                                          tools=TOOLS, transcript=transcript)
+            if comp.stop == "refusal":
+                return {"mode": "ai", "final": "request refused by safety classifier",
+                        "actions": actions, "refusal": True}
+            if comp.text:
+                final_text = comp.text
+            if not comp.tool_calls:
                 break
-
-            messages.append({"role": "assistant", "content": content})
+            transcript.append({"role": "assistant", "text": comp.text,
+                               "tool_calls": [{"id": t.id, "name": t.name, "input": t.input}
+                                              for t in comp.tool_calls]})
             results = []
-            for tu in tool_uses:
-                out = self._run_tool(_block_field(tu, "name"), _block_field(tu, "input", {}) or {}, active_house)
-                if _block_field(tu, "name") in ("propose_command", "recommend"):
-                    actions.append({"tool": _block_field(tu, "name"), **out})
-                results.append({"type": "tool_result", "tool_use_id": _block_field(tu, "id"),
-                                "content": str(out)})
-            messages.append({"role": "user", "content": results})
+            for tc in comp.tool_calls:
+                out = self._run_tool(tc.name, tc.input, active_house)
+                if tc.name in ("propose_command", "recommend"):
+                    actions.append({"tool": tc.name, **out})
+                results.append({"id": tc.id, "name": tc.name, "output": out})
+            transcript.append({"role": "tools", "results": results})
 
         return {"mode": "ai", "final": final_text, "actions": actions}
