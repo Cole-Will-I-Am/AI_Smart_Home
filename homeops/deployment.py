@@ -167,6 +167,11 @@ def validate_deployment(dep: DeploymentConfig, dash_token_present: bool = False)
         else:
             fail("ai.provider", f"unknown provider {dep.ai.get('provider')!r} "
                                 "(anthropic | openai | openai-compatible | none)")
+        b = dep.ai.get("l1_daily_budget")
+        if b is not None and (not isinstance(b, int) or b < 1):
+            fail("ai.l1_daily_budget", f"must be a positive integer, got {b!r}")
+        elif b is not None:
+            ok("ai.l1_daily_budget", f"{b} AI-originated L1 actuations/house/day")
 
     if dep.event_bridge and dep.mode == "real":
         try:

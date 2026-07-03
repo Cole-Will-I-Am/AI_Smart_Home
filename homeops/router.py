@@ -33,13 +33,18 @@ class CommandRouter:
         self.clock = clock or datetime.now   # wall clock for time-dependent semantic invariants
 
     def _audit(self, intent: Intent, operator: Operator, status: str, message: str,
-               level: int | None, rollback: str | None = None, ctoken: str | None = None) -> Result:
+               level: int | None, rollback: str | None = None, ctoken: str | None = None,
+               attest: bool = False) -> Result:
         self.audit.record(AuditRecord(
             tick=self.engine.tick, operator=operator.kind, house_id=intent.house_id,
             subsystem=intent.subsystem, target=intent.target, action=intent.action,
             args=dict(intent.args), level=level, status=status, message=message, rollback_token=rollback,
         ))
-        return Result(status=status, message=message, level=level, confirm_token=ctoken, rollback_token=rollback)
+        # Every confirm_required carries the engine's own signed statement of the deed, so the
+        # UI can show the human ground truth rather than the model's account of it (Part 18b).
+        att = self.engine.attest(intent, operator, level) if attest else None
+        return Result(status=status, message=message, level=level, confirm_token=ctoken,
+                      rollback_token=rollback, attestation=att)
 
     def execute(self, intent: Intent, operator: Operator) -> Result:
         eng = self.engine
@@ -73,7 +78,8 @@ class CommandRouter:
         # cross-house guard
         if intent.house_id != operator.active_house and not intent.confirm_cross_house:
             return self._audit(intent, operator, "confirm_required",
-                               f"cross-house: confirm you intend to control {intent.house_id}", level)
+                               f"cross-house: confirm you intend to control {intent.house_id}", level,
+                               attest=True)
 
         # Part 14 — semantic invariants: the ladder gates verbs; envelopes gate the values.
         # (Adapter-independent: the live HA adapter forwards args raw, so the clamp lives here.)
@@ -95,7 +101,7 @@ class CommandRouter:
                 why = f"confirmation required for {intent.subsystem}.{intent.action}"
                 if violation:
                     why += f" — {violation}"
-                return self._audit(intent, operator, "confirm_required", why, level, ctoken=tok)
+                return self._audit(intent, operator, "confirm_required", why, level, ctoken=tok, attest=True)
 
         # L3 requires approved, professionally-installed hardware
         if level == 3:
@@ -119,6 +125,14 @@ class CommandRouter:
         if not eng.allow_cooldown(intent):
             return self._audit(intent, operator, "refused",
                                f"cooldown: {intent.subsystem}.{intent.action} actuated too recently", level)
+
+        # Part 18a — AI L1 nuisance budget. Envelope-legal L1 spam is still an attack at volume;
+        # cap AI-originated L1 actuation per house per day. Humans/system operators are exempt.
+        if operator.kind == "ai" and level == 1:
+            if not eng.ai_l1_allow(intent.house_id, self.clock().date()):
+                return self._audit(intent, operator, "refused",
+                                   f"AI daily L1 budget exhausted for {intent.house_id} "
+                                   f"({eng._ai_l1_budget}/day) — nuisance guard", level)
 
         res = self.adapter.apply(intent)
         if not res.get("ok"):

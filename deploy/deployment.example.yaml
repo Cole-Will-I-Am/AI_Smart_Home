@@ -32,3 +32,5 @@ deployment:
   #   key_env: HOMEOPS_AI_KEY            # optional bearer; hosted endpoints (OpenRouter, ...) need it
   #   # A non-loopback endpoint MUST be https — the estate snapshot travels in every request.
   #   # allow_insecure: true is the explicit, linted exception for a trusted VLAN.
+  #   l1_daily_budget: 60                # cap on AI-originated L1 actuations per house per day
+  #                                      # (envelope-legal spam is still an attack at volume)

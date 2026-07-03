@@ -42,10 +42,16 @@ class PendingConfirmation:
     args: dict = field(default_factory=dict)
     level: int | None = None
     message: str = ""
+    attestation: object = None   # engine-signed ground truth for the UI to render (Part 18b)
 
     def describe(self) -> str:
         extra = f" {self.args}" if self.args else ""
         return f"{self.house_id}: {self.subsystem}.{self.target} {self.action}{extra} (L{self.level})"
+
+    @property
+    def effect(self) -> str:
+        """The sentence a UI shows the human — from the ENGINE, never the model."""
+        return self.attestation.effect if self.attestation is not None else self.describe()
 
 
 class ChatSession:
@@ -152,7 +158,7 @@ class ChatSession:
             p = PendingConfirmation(
                 house_id=src.get("house_id", self.active_house), subsystem=src["subsystem"],
                 target=src["target"], action=src["action"], args=dict(src.get("args") or {}),
-                level=a.get("level"), message=a.get("message", ""))
+                level=a.get("level"), message=a.get("message", ""), attestation=a.get("attestation"))
             if not any(q.describe() == p.describe() for q in self.pending):
                 self.pending.append(p)
 
@@ -164,6 +170,22 @@ class ChatSession:
         cross = p.house_id != self.operator.active_house
         intent = Intent(p.house_id, p.subsystem, p.target, p.action, dict(p.args),
                         confirm_cross_house=cross)   # saying "confirm" IS the explicit cross-house consent
+        # Ground-truth guard (Part 18b): the pending intent is reconstructed from the SESSION'S
+        # own fields, never the model's — but the attestation the human just SAW came back through
+        # the model's tool result. If a hostile model forged/edited it, the signature won't verify
+        # against the engine's key. A mismatch means the human may have consented to a lie: refuse.
+        eng = self.world.router.engine
+        if p.attestation is not None:
+            att = p.attestation
+            if not hasattr(att, "signature"):
+                from ..permissions import Attestation
+                att = Attestation.from_dict(att) if isinstance(att, dict) else None
+            truth = eng.attest(intent, self.operator, eng.level(p.subsystem, p.action))
+            if att is None or not eng.verify_attestation(att) or att.statement.get("effect") != truth.effect:
+                self._notes.append(f"resident confirm REFUSED — attestation mismatch on {p.describe()}")
+                return {"status": "refused",
+                        "message": "attestation did not verify — the displayed action may have been "
+                                   "tampered by the model; refusing to execute unverified consent"}
         r = self.world.router.execute(intent, self.operator)
         if r.status == "confirm_required" and r.confirm_token:
             intent.confirm_token = r.confirm_token   # token: engine -> human path -> engine; never the model

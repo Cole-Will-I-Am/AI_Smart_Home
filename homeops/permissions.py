@@ -11,6 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 import hashlib
+import hmac
 import json
 import secrets
 
@@ -99,6 +100,48 @@ ROLLBACK_INVERSE: dict[tuple[str, str], tuple[str, str]] = {
 QUIET_HOURS = (22, 7)   # announcements in 22:00–06:59 require a human
 
 
+# A plain-language, DETERMINISTIC rendering of what an intent does — computed from the intent,
+# never from the model's text. This is the sentence a UI shows the human at the moment of consent.
+_EFFECT_VERB = {
+    ("lock", "unlock"): "UNLOCK", ("lock", "lock"): "LOCK",
+    ("garage", "open"): "OPEN the garage", ("garage", "close"): "CLOSE the garage",
+    ("alarm", "disarm"): "DISARM the alarm", ("alarm", "arm"): "ARM the alarm",
+    ("water", "shutoff_main"): "SHUT OFF the main water", ("water", "open_main"): "OPEN the main water",
+    ("power", "breaker_off"): "CUT power to", ("power", "breaker_on"): "RESTORE power to",
+    ("generator", "start"): "START the generator", ("network", "quarantine"): "QUARANTINE",
+    ("network", "firewall_policy"): "CHANGE the firewall policy on",
+}
+
+
+def describe_effect(intent: "Intent", level: int | None) -> str:
+    verb = _EFFECT_VERB.get((intent.subsystem, intent.action))
+    where = f"{intent.house_id}/{intent.target}"
+    base = f"{verb} {where}" if verb else f"{intent.subsystem}.{intent.action} on {where}"
+    if intent.args:
+        base += " (" + ", ".join(f"{k}={v}" for k, v in sorted(intent.args.items())) + ")"
+    return f"[L{level}] {base}"
+
+
+@dataclass
+class Attestation:
+    """An engine-signed statement of a pending action. The UI renders `.statement['effect']`
+    as GROUND TRUTH; the human confirms against this, not the model's prose. Serializable so it
+    can cross a UI boundary; the signature is verifiable only by the engine that minted it."""
+    statement: dict
+    signature: str
+
+    @property
+    def effect(self) -> str:
+        return self.statement.get("effect", "")
+
+    def to_dict(self) -> dict:
+        return {"statement": dict(self.statement), "signature": self.signature}
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "Attestation":
+        return cls(statement=dict(d["statement"]), signature=d["signature"])
+
+
 def _within(args: dict, key: str, lo: float, hi: float) -> str | None:
     if key not in args or args.get(key) is None:
         return None                       # absent -> adapter default; nothing to judge
@@ -165,6 +208,7 @@ class Result:
     level: int | None = None
     confirm_token: str | None = None
     rollback_token: str | None = None
+    attestation: "Attestation | None" = None   # present on confirm_required: the engine's ground truth
 
     @property
     def ok(self) -> bool:
@@ -172,12 +216,53 @@ class Result:
 
 
 class PermissionEngine:
-    def __init__(self, rate_limit: int = 5) -> None:
+    def __init__(self, rate_limit: int = 5, ai_l1_daily_budget: int = 60,
+                 attest_key: bytes | None = None) -> None:
         self._tokens: dict[str, tuple[str, int]] = {}   # token -> (intent+operator key, expiry_tick)
         self._rate_limit = rate_limit
         self._rate: dict[tuple[str, str], tuple[int, int]] = {}   # (house, subsystem) -> (tick, count)
         self._last_action: dict[tuple[str, str, str, str], int] = {}   # cooldown tracker
         self.tick = 0
+        # Part 18a — nuisance budget: a hostile model can propose only ENVELOPE-LEGAL L1 actions,
+        # but at volume that is still an attack (a house that toggles lights all night). This caps
+        # AI-ORIGINATED L1 actuation per (house, day). Humans and local automations are never
+        # budgeted. day is provided by the router's clock so it needs no wall access here.
+        self._ai_l1_budget = ai_l1_daily_budget
+        self._ai_l1_used: dict[tuple[str, object], int] = {}   # (house, date) -> count
+        # Part 18b — attestation: a private key the MODEL NEVER SEES. Pending confirmations are
+        # signed with it so the UI can render the engine's ground truth, not the model's prose.
+        self._attest_key = attest_key or secrets.token_bytes(32)
+
+    def ai_l1_allow(self, house_id: str, day) -> bool:
+        """Consume one unit of the AI's daily L1 nuisance budget for `house_id`. True if within
+        budget. Idempotent per call; the router calls it exactly once per AI L1 actuation."""
+        k = (house_id, day)
+        used = self._ai_l1_used.get(k, 0)
+        if used >= self._ai_l1_budget:
+            return False
+        self._ai_l1_used[k] = used + 1
+        return True
+
+    def ai_l1_remaining(self, house_id: str, day) -> int:
+        return max(0, self._ai_l1_budget - self._ai_l1_used.get((house_id, day), 0))
+
+    def attest(self, intent: "Intent", operator: "Operator", level: int | None) -> "Attestation":
+        """Sign the ENGINE'S OWN view of a pending action. Consent is to the deed, not to any
+        model's narration of it. HMAC over a canonical statement with a key outside model context;
+        `verify_attestation` recomputes it. Binds house/subsystem/target/action/args/level/operator."""
+        stmt = {
+            "house_id": intent.house_id, "subsystem": intent.subsystem, "target": intent.target,
+            "action": intent.action, "args": dict(intent.args), "level": level,
+            "operator": operator.kind, "effect": describe_effect(intent, level),
+        }
+        body = json.dumps(stmt, sort_keys=True, default=str).encode()
+        sig = hmac.new(self._attest_key, body, hashlib.sha256).hexdigest()
+        return Attestation(statement=stmt, signature=sig)
+
+    def verify_attestation(self, att: "Attestation") -> bool:
+        body = json.dumps(att.statement, sort_keys=True, default=str).encode()
+        expect = hmac.new(self._attest_key, body, hashlib.sha256).hexdigest()
+        return hmac.compare_digest(expect, att.signature)
 
     def level(self, subsystem: str, action: str) -> int | None:
         return ACTION_LEVELS.get((subsystem, action))

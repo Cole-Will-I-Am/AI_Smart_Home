@@ -72,7 +72,13 @@ class OpsLayer:
                 args=args.get("args", {}) or {},
             )
             r = w.router.execute(intent, Operator("ai", active_house, "ai-ops"))
-            return {"status": r.status, "message": r.message, "level": r.level}
+            out = {"status": r.status, "message": r.message, "level": r.level}
+            # The signed attestation is engine ground truth for the human UI. It is NOT secret
+            # (unlike the token) — it CANNOT authorize anything, only describe — so returning it
+            # to the model's tool result is safe, and the session lifts it onto the pending item.
+            if r.attestation is not None:
+                out["attestation"] = r.attestation
+            return out
         return {"error": f"unknown tool {name}"}
 
     # --- main loop -----------------------------------------------------------
