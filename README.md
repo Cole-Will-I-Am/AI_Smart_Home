@@ -41,9 +41,9 @@ flowchart TD
     P["📱 Phone — HA Companion"] --> I
     V["🎙 Voice — HA Assist (local)"] --> I
     C["⌨️ CLI / dashboard"] --> I
-    AI["🤖 AI ops layer (Claude / GPT) — proposes only"] --> I
+    AI["🤖 AI ops layer (any chat-completions model) — proposes only"] --> I
     I{{"Intent — house · subsystem · target · action · operator"}}
-    I --> E["Permission engine L0–L5 — RBAC · confirm tokens · cooldowns · health gate"]
+    I --> E["Permission engine L0–L5 — RBAC · confirm tokens · semantic envelopes · L1 budget · signed attestation · cooldowns · health gate"]
     E -- "refuse / recommend-only (L4–L5)" --> X[("hash-chained audit")]
     E -- approved --> R["Router — verified actuation + rollback"]
     R --> X
@@ -67,6 +67,7 @@ AI actuation while local automations keep running.
 | **Segmented & hardened** | VLANs for trusted / IoT / cameras / servers / guest / automation; WireGuard-only remote access; MFA; no default creds, no exposed management ports. |
 | **Two-house separation** | Independent cores, networks, identities, logs. Every command resolves to exactly one house; cross-house or high-impact actions require explicit confirmation. |
 | **Safe high-power integration** | Panels, breakers, generator, solar, battery, ATS, egress hardware: professionally installed and inspected. The AI never bypasses a code-required safety system. |
+| **Bring any model** | The reasoning layer is a plug; the engine is the socket. Any chat-completions endpoint — Claude, GPT, or a local Ollama/vLLM model on-prem — faces the same gated tools. Swapping the model changes *capability*, never *authority*. |
 
 ## The permission ladder
 
@@ -90,20 +91,43 @@ architecture and permission model can be validated before a single device is bou
 
 ```bash
 pip install -r requirements.txt        # PyYAML + pytest (anthropic only for the live test)
-pytest -q                              # 119 offline tests: permissions, router, automations,
+pytest -q                              # 226 offline tests: permissions, router, automations,
                                        #   fail-safe, local-first, AI-ops, audit, health, RBAC,
                                        #   portfolio, exporters, dashboard, service, preflight
 python scripts/run_scenario.py all    # leak / grid-loss / fire-CO / intrusion / rogue-device
 python scripts/demo.py                # end-to-end: cross-house guard, WAN-down local-first, L4 refusal
 python -m homeops.cli status          # both houses at a glance
 python -m homeops.cli ask             # resident chat: memory, in-dialogue confirm/deny
-                                      #   (ANTHROPIC_API_KEY -> Claude, OPENAI_API_KEY -> GPT, neither -> deterministic fallback)
+                                      #   model chosen in the deployment's ai: section
+                                      #   (Claude · GPT · any OpenAI-compatible/Ollama endpoint · none -> deterministic fallback)
 ```
 
-The Claude ops layer (`homeops/ai/`, `claude-opus-4-8`, adaptive thinking, cached system prefix)
-proposes actions through gated, audited tools; the offline suite drives it with a scripted mock.
-If the API or internet is unavailable, or a house is on AI hold, it degrades to a deterministic
-fallback — **the house is never in the AI's hands for safety**.
+The ops layer (`homeops/ai/`) is **model-agnostic**: a neutral transcript is translated to any
+vendor wire format by a `Provider`, so Claude (native), GPT, or any OpenAI-compatible endpoint
+(OpenRouter, DeepSeek, Groq, vLLM, LM Studio, or a local **Ollama** model that keeps the whole
+loop on-prem) proposes through the same gated, audited tools. The endpoint is untrusted by
+construction — it can only *propose*. If the API/internet is unavailable, or a house is on AI
+hold, it degrades to a deterministic fallback — **the house is never in the AI's hands for
+safety**.
+
+### Bring any model
+
+The model is an installer choice, set in the deployment descriptor — not a code change:
+
+```yaml
+ai:
+  provider: openai-compatible          # anthropic · openai · openai-compatible · none
+  model: qwen3:14b                      # required for openai-compatible
+  base_url: http://127.0.0.1:11434/v1   # Ollama on-prem → the whole loop stays local
+  l1_daily_budget: 60                   # cap on AI-originated L1 actuations/house/day
+  # A non-loopback endpoint MUST be https — the estate snapshot travels in every request;
+  # allow_insecure: true is the explicit, linted exception for a trusted VLAN.
+```
+
+`validate` lints this statically (unknown provider, missing model, plaintext non-loopback
+transport, bad budget all fail closed) before anything touches a house. The security claim is
+independent of *which* model you choose: a hostile endpoint changes what is *proposed*, never
+what *occurs*.
 
 ## Operating it for real
 
@@ -156,23 +180,30 @@ Both are unit-tested offline against fake transports — the suite needs no live
 
 ## What the engine guarantees
 
-Adversarially reviewed (by a different LLM) and hardened; every row has a regression test in
-[`tests/test_hardening.py`](tests/test_hardening.py) and friends.
+Adversarially reviewed (by a different LLM), iterated across review findings R-1–R-3, and
+stress-tested against a deliberately **hostile model**. Every row has a regression test in
+[`tests/test_hardening.py`](tests/test_hardening.py), [`test_redteam.py`](tests/test_redteam.py),
+[`test_any_model.py`](tests/test_any_model.py), and
+[`test_nuisance_and_attestation.py`](tests/test_nuisance_and_attestation.py).
 
 | Threat | Defense |
 |---|---|
 | AI self-confirms a cross-house action | `confirm_cross_house` removed from the AI tool surface — a human must confirm |
 | Confirmation token replayed | tokens are unguessable, single-use, TTL-bounded, and bound to the **full intent + operator** |
 | Chat coaxes the model into confirming | tokens flow engine → resident → engine; tests assert issued tokens **never appear in the model's context** |
-| Model swapped for a different vendor | authority is model-invariant: providers translate wire formats only — Claude and GPT face the same engine, tools, and absent token (proven under both in tests) |
+| Model swapped for a different vendor | authority is model-invariant: any chat-completions endpoint (Claude · GPT · local Ollama/vLLM) translates wire formats only and faces the same engine, tools, and absent token |
+| A **hostile** model smuggles authority, proposes L5, and lies about it | capability varies, authority does not: forged `confirm_token`/`emergency`/cross-house fields are dropped by construction, L4/L5 have no path, zero actuation, and the audit chain contradicts the model's prose ([`test_any_model.py`](tests/test_any_model.py)) |
 | Spoofed leak event closes the main | two-signal rule re-reads **both** independent channels (wet sensor AND abnormal flow) at actuation time |
 | Rollback raced by a pending transition | rollback cancels in-flight physical transitions |
+| Rollback used as an unguarded side door | rollback is gated at the authority of the **inverse verb** — operator required, RBAC/guest/role caps apply, AI barred from L2+, confirm-required inverses refused, safety-critical inverses health-gated, tokens single-use |
 | HTTP 200 treated as physical truth | safety-impacting actions are **verified by read-back**; unverified outcomes are recorded as such |
 | Dead device silently "commanded" | health gate refuses safety-critical actuation on offline/stale devices |
 | AI fallback escalates | the fallback runs as an AI-limited operator, never silently as `owner` |
 | Stray action maps to a dangerous service | adapter mappings are **fail-closed** (`unlock_unknown` can never become `lock.unlock`) |
 | Out-of-envelope argument (a 200 °F setpoint) | **semantic invariants** in the engine escalate to human confirmation — adapter-independent; the simulator's clamp is no longer the last line |
-| Standing consent abused | **delegation certificates** are L ≤ 2-capped, windowed, budgeted, revocable; envelopes outrank them; tokens still never enter model context |
+| Standing consent abused | **delegation certificates** are L ≤ 2-capped, windowed, budgeted, revocable; envelopes outrank them; tokens still never enter model context; `grant()` checks the **grantor's** authority, not just the action's |
+| Model spams envelope-legal L1 actions all night | an **AI L1 nuisance budget** caps AI-originated L1 actuation per house per day; humans and emergency automations are exempt |
+| Model lies about what a pending action does, to farm a rubber-stamp | every `confirm_required` carries an **engine-signed attestation** (HMAC, key outside model context) rendering the true deed; `confirm()` refuses any signature mismatch — consent attaches to the deed, not its narration |
 | Houses collapse onto shared devices | `strict_entity_map` fails startup if any controllable entity lacks an explicit mapping; the validator also rejects duplicate targets |
 | Python process dies with the safety logic | `homeops/exporters/` emits the life-safety subset (leak, fire/CO, freeze) as **native HA automations** — the Python layer is the coordination tier, never the last line of defense |
 
@@ -180,13 +211,13 @@ Adversarially reviewed (by a different LLM) and hardened; every row has a regres
 
 | Path | Purpose |
 |---|---|
-| `homeops/permissions.py` | the L0–L5 model: action levels, confirm tokens, cooldowns, semantic (argument) invariants |
+| `homeops/permissions.py` | the L0–L5 model: action levels, confirm tokens, cooldowns, semantic (argument) invariants, AI L1 nuisance budget, signed attestations |
 | `homeops/delegations.py` | standing-consent certificates + `try_delegated_execute` (engine-side confirm dance) |
 | `homeops/router.py` | resolution pipeline, verified actuation, rollback tokens |
 | `homeops/automations.py` | local-first automations (run below the AI) |
 | `homeops/audit.py` | tamper-evident hash-chained audit, JSONL persistence, `verify_chain()` |
 | `homeops/health.py` · `identity.py` | device heartbeat gate · RBAC principals/roles/scopes |
-| `homeops/ai/` | model-agnostic ops layer (`providers.py`: Claude native, GPT via chat-completions): operational charter, gated tools, stateful resident chat (`session.py`), deterministic fallback |
+| `homeops/ai/` | model-agnostic ops layer (`providers.py`: Claude native · GPT SDK · any OpenAI-compatible/Ollama endpoint over stdlib HTTP): operational charter, gated tools, stateful resident chat with attestation surfacing (`session.py`), deterministic fallback |
 | `homeops/adapters/` | sim, Home Assistant, OPNsense, composite, per-property |
 | `homeops/simulator/` | both houses in software: devices, network, scenarios |
 | `homeops/portfolio.py` · `dashboard.py` | N-property control plane · HTML oversight view |
@@ -197,8 +228,11 @@ Adversarially reviewed (by a different LLM) and hardened; every row has a regres
 ## Status — the honest ladder
 
 ```text
-reference implementation      ✓  complete, 119 tests
+reference implementation      ✓  complete, 226 tests
 pilot-ready software          ✓  audit chain · verified actuation · RBAC ·
+                                 semantic envelopes · delegation certs ·
+                                 authority-gated rollback · any-model plug ·
+                                 L1 nuisance budget · signed attestations ·
                                  N-property plane · HA life-safety export ·
                                  dashboard · runtime service · secrets ·
                                  preflight commissioning
