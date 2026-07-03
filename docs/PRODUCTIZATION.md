@@ -64,6 +64,23 @@ to something that could safely run a real pilot home. Ordered by the S1→S2 sev
       remaining brief items (installer network, insurance, certified hardware, pricing) are
       go-to-market, not repository work.
 
+- [x] **Part 14 - Semantic invariants** (S1). Review finding R-1: the ladder quantified over
+      verbs while the simulator's device clamp silently supplied argument semantics the live HA
+      adapter never enforces. `ARG_INVARIANTS` (homeops/permissions.py) now gates the values in
+      the authority layer — temperature / EV-amp envelopes, quiet hours — escalating
+      out-of-envelope requests to confirm_required. The owner's override token binds to the
+      exact args; guests and the AI receive none; `system` automations are exempt so an
+      emergency response is never envelope-blocked.
+
+- [x] **Part 15 - Delegation certificates** (S1/S2). Bounded standing consent
+      (homeops/delegations.py): per-action policies with time windows, argument envelopes,
+      daily budgets, expiry and revocation, capped at L2 (grant time AND match time). The
+      ENGINE performs the confirm dance under the grantor's identity; regression tests prove
+      tokens still never enter the model's context and that Part 14 envelopes outrank any
+      delegation. Simulated week of routine proposals: 35 resident interruptions -> 7 (80%
+      vigilance reduction), every delegated act writing a hash-chained `delegated` record
+      naming its certificate.
+
 ## Not in scope for these parts (require the real world)
 - Independent security review / penetration test of the actuation plane.
 - Verified fail-safe on real heterogeneous hardware.

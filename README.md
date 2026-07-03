@@ -9,7 +9,7 @@
 *The AI proposes. A deterministic, fail-closed permission engine disposes.*
 
 ![python](https://img.shields.io/badge/python-3.10%2B-2f6bff?logo=python&logoColor=white&labelColor=0b1c40)
-![tests](https://img.shields.io/badge/tests-119%20passed-2ea043?labelColor=0b1c40)
+![tests](https://img.shields.io/badge/tests-199%20passed-2ea043?labelColor=0b1c40)
 ![core](https://img.shields.io/badge/core-stdlib--only-2f6bff?labelColor=0b1c40)
 ![cloud](https://img.shields.io/badge/cloud-none%20required-2f6bff?labelColor=0b1c40)
 ![models](https://img.shields.io/badge/models-Claude%20%C2%B7%20GPT-2f6bff?labelColor=0b1c40)
@@ -171,6 +171,8 @@ Adversarially reviewed (by a different LLM) and hardened; every row has a regres
 | Dead device silently "commanded" | health gate refuses safety-critical actuation on offline/stale devices |
 | AI fallback escalates | the fallback runs as an AI-limited operator, never silently as `owner` |
 | Stray action maps to a dangerous service | adapter mappings are **fail-closed** (`unlock_unknown` can never become `lock.unlock`) |
+| Out-of-envelope argument (a 200 °F setpoint) | **semantic invariants** in the engine escalate to human confirmation — adapter-independent; the simulator's clamp is no longer the last line |
+| Standing consent abused | **delegation certificates** are L ≤ 2-capped, windowed, budgeted, revocable; envelopes outrank them; tokens still never enter model context |
 | Houses collapse onto shared devices | `strict_entity_map` fails startup if any controllable entity lacks an explicit mapping; the validator also rejects duplicate targets |
 | Python process dies with the safety logic | `homeops/exporters/` emits the life-safety subset (leak, fire/CO, freeze) as **native HA automations** — the Python layer is the coordination tier, never the last line of defense |
 
@@ -178,7 +180,8 @@ Adversarially reviewed (by a different LLM) and hardened; every row has a regres
 
 | Path | Purpose |
 |---|---|
-| `homeops/permissions.py` | the L0–L5 model: action levels, confirm tokens, cooldowns |
+| `homeops/permissions.py` | the L0–L5 model: action levels, confirm tokens, cooldowns, semantic (argument) invariants |
+| `homeops/delegations.py` | standing-consent certificates + `try_delegated_execute` (engine-side confirm dance) |
 | `homeops/router.py` | resolution pipeline, verified actuation, rollback tokens |
 | `homeops/automations.py` | local-first automations (run below the AI) |
 | `homeops/audit.py` | tamper-evident hash-chained audit, JSONL persistence, `verify_chain()` |
