@@ -29,8 +29,14 @@ def test_valve_takes_ticks_to_close(bare):
     assert bare.state.get_state("house_a.water.main_valve") == "closed"
 
 
-def test_in_range_thermostat_clamped(bare):
-    r = bare.router.execute(
+def test_out_of_envelope_thermostat_escalates_then_clamps(bare):
+    # Part 14: the ENGINE gates the value first (the live HA adapter forwards args raw, so the
+    # old behaviour — relying on the simulator's clamp — tested the wrong layer).
+    raw = bare.router.execute(
         Intent("house_a", "climate", "thermostat_main", "set_temperature", {"temperature": 200}), owner())
-    assert r.status == "executed"
-    assert bare.state.get_state("house_a.climate.thermostat_main") == 82   # clamped to approved max
+    assert raw.status == "confirm_required" and "envelope" in raw.message
+    confirmed = bare.router.execute(
+        Intent("house_a", "climate", "thermostat_main", "set_temperature", {"temperature": 200},
+               confirm_token=raw.confirm_token), owner())
+    assert confirmed.status == "executed"   # explicit, audited human exception
+    assert bare.state.get_state("house_a.climate.thermostat_main") == 82   # device clamp still applies

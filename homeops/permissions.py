@@ -3,6 +3,9 @@
 The level is a property of the *action*, checked here — the AI cannot self-escalate.
 L4/L5 have no execution path at all: the router returns `recommend_only` / `prohibited`
 and never actuates. Confirmation tokens are single-use, house-scoped, and TTL-bounded.
+
+Part 14 adds SEMANTIC INVARIANTS: the ladder quantifies over verbs; ARG_INVARIANTS
+quantifies over the values. See the section below.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
@@ -66,6 +69,54 @@ EXPECTED_STATE: dict[tuple[str, str], set] = {
     ("hvac", "emergency_shutoff"): {"off"},
     ("generator", "start"): {"starting", "running"},
 }
+
+# --- Part 14: semantic invariants — envelopes over ARGUMENTS, not just verbs ---------------
+# Review finding R-1: ACTION_LEVELS quantifies over (subsystem, action), but a complete speech
+# act is verb + arguments + context. The simulator clamps a 200°F setpoint; the live HA adapter
+# forwards it raw — so the sim was flattering the engine by enforcing semantics at the wrong
+# layer. The envelope therefore lives HERE, in the authority layer, adapter-independent.
+#
+# An out-of-envelope argument never silently executes: the router escalates it to
+# confirm_required. The token an OWNER then receives is bound to those exact args, so the
+# override is explicit, single-use, and audited. Guests and the AI receive no token.
+# `system` operators (local automations, running below the AI with reviewed hard-coded values)
+# are exempt — an emergency response must never be blockable by a comfort envelope.
+
+QUIET_HOURS = (22, 7)   # announcements in 22:00–06:59 require a human
+
+
+def _within(args: dict, key: str, lo: float, hi: float) -> str | None:
+    if key not in args or args.get(key) is None:
+        return None                       # absent -> adapter default; nothing to judge
+    try:
+        v = float(args[key])
+    except (TypeError, ValueError):
+        return f"{key}={args.get(key)!r} is not numeric"
+    return None if lo <= v <= hi else f"{key}={v:g} outside envelope [{lo:g}, {hi:g}]"
+
+
+def _quiet(args: dict, now) -> str | None:
+    start, end = QUIET_HOURS
+    h = now.hour
+    in_quiet = (h >= start or h < end) if start > end else (start <= h < end)
+    return (f"quiet hours {start:02d}:00–{end - 1:02d}:59: announce at {h:02d}:xx requires a human"
+            if in_quiet else None)
+
+
+# (subsystem, action) -> callable(args, now) returning a violation reason, or None if fine.
+ARG_INVARIANTS: dict[tuple[str, str], Any] = {
+    ("climate", "set_temperature"): lambda a, now: _within(a, "temperature", 50, 90),
+    ("evcharger", "set_limit"):     lambda a, now: _within(a, "amps", 6, 48),
+    ("speaker", "announce"):        _quiet,
+}
+
+
+def semantic_violation(intent: "Intent", operator: "Operator", now) -> str | None:
+    """Return a human-readable envelope violation, or None. System operators are exempt."""
+    if operator.kind == "system":
+        return None
+    inv = ARG_INVARIANTS.get((intent.subsystem, intent.action))
+    return inv(intent.args, now) if inv else None
 
 
 @dataclass

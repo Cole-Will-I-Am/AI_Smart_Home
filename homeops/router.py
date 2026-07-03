@@ -4,10 +4,18 @@ Resolves the target house, checks the permission level, applies mode/confirmatio
 cross-house/rate-limit/approved-hardware gates, executes via the adapter, and writes an
 audit record with a rollback token where the action is reversible. This is enforcement:
 the AI can only *propose* intents; it cannot bypass any of these checks.
+
+Part 14: the router also checks SEMANTIC INVARIANTS (permissions.ARG_INVARIANTS) — the
+ladder gates verbs, envelopes gate the values. Out-of-envelope arguments escalate to
+confirm_required rather than executing silently. Time-dependent envelopes (quiet hours)
+read `self.clock`, injectable for tests and deployments (defaults to wall clock).
 """
 from __future__ import annotations
+from datetime import datetime
+
 from .permissions import (
     PermissionEngine, Intent, Operator, Result, CONFIRM_REQUIRED, SAFETY_CRITICAL, EXPECTED_STATE,
+    semantic_violation,
 )
 from .audit import AuditLog, AuditRecord
 from .adapters.base import Adapter
@@ -16,12 +24,13 @@ from .state import StateStore
 
 class CommandRouter:
     def __init__(self, engine: PermissionEngine, state: StateStore, adapter: Adapter, audit: AuditLog,
-                 health=None) -> None:
+                 health=None, clock=None) -> None:
         self.engine = engine
         self.state = state
         self.adapter = adapter
         self.audit = audit
         self.health = health   # optional HealthRegistry; gates safety-critical actuation
+        self.clock = clock or datetime.now   # wall clock for time-dependent semantic invariants
 
     def _audit(self, intent: Intent, operator: Operator, status: str, message: str,
                level: int | None, rollback: str | None = None, ctoken: str | None = None) -> Result:
@@ -66,20 +75,27 @@ class CommandRouter:
             return self._audit(intent, operator, "confirm_required",
                                f"cross-house: confirm you intend to control {intent.house_id}", level)
 
+        # Part 14 — semantic invariants: the ladder gates verbs; envelopes gate the values.
+        # (Adapter-independent: the live HA adapter forwards args raw, so the clamp lives here.)
+        violation = semantic_violation(intent, operator, self.clock())
+
         # confirmation gate
-        needs_confirm = (intent.subsystem, intent.action) in CONFIRM_REQUIRED
+        needs_confirm = (intent.subsystem, intent.action) in CONFIRM_REQUIRED or violation is not None
         if operator.kind == "ai" and level >= 2:
             needs_confirm = True   # AI's L2+ control is conditioned on a human confirmation
         if needs_confirm:
             authorized = (operator.kind == "system" and intent.emergency) or eng.check_token(intent, operator)
             if not authorized:
                 # The AI cannot self-confirm — a human must. So it gets no usable token,
-                # only the signal that human confirmation is required. Interactive operators
-                # (owner) receive a single-use, unguessable token bound to this exact intent
-                # (including args) AND to their operator identity.
-                tok = None if operator.kind == "ai" else eng.issue_token(intent, operator)
-                return self._audit(intent, operator, "confirm_required",
-                                   f"confirmation required for {intent.subsystem}.{intent.action}", level, ctoken=tok)
+                # only the signal that human confirmation is required. Only the OWNER receives
+                # a single-use, unguessable token bound to this exact intent (INCLUDING args —
+                # a token minted for 200°F cannot be replayed as 205°F) AND to their identity.
+                # Guests receive no token either: an out-of-envelope guest request goes to the owner.
+                tok = eng.issue_token(intent, operator) if operator.kind == "owner" else None
+                why = f"confirmation required for {intent.subsystem}.{intent.action}"
+                if violation:
+                    why += f" — {violation}"
+                return self._audit(intent, operator, "confirm_required", why, level, ctoken=tok)
 
         # L3 requires approved, professionally-installed hardware
         if level == 3:
