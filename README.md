@@ -71,6 +71,9 @@ pytest -q                                # full offline suite: permissions, rout
 python scripts/run_scenario.py all       # replays leak / grid-loss / fire-CO / intrusion / rogue-device with asserted timelines
 python scripts/demo.py                   # end-to-end two-house demo (cross-house guard, WAN-down local-first, L4 refusal)
 python -m homeops.cli status             # dashboard of both houses
+python -m homeops.cli validate  deploy/deployment.example.yaml   # offline lint (fail-closed)
+python -m homeops.cli preflight /etc/homeops/deployment.yaml     # read-only live commissioning
+python -m homeops.cli serve     /etc/homeops/deployment.yaml     # systemd-managed runtime
 ```
 
 The Claude ops layer (`homeops/ai/`) uses `claude-opus-4-8` with adaptive thinking and a

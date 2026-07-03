@@ -24,6 +24,20 @@ to something that could safely run a real pilot home. Ordered by the S1→S2 sev
 - [x] **Part 5 — Native life-safety export** (S1). Emit the life-safety subset (leak, fire/CO, freeze)
       as native Home Assistant / Node-RED automation definitions so they survive the Python process.
 - [x] **Part 6 — Operator dashboard** (S2). A real oversight UI for the managed-monitoring tier.
+- [x] **Part 7 — Runtime service** (S1). A long-running, systemd-managed daemon (`homeops.cli serve`):
+      housekeeping loop, HA event bridge, liveness heartbeat, and a READ-ONLY HTTP surface
+      (`/`, `/healthz`) that is token-gated and refuses non-loopback binds without a bearer token.
+      No write path exists on the network surface by construction. Hardened unit file + installer
+      in `deploy/`.
+- [x] **Part 8 — Secrets & deployment hardening** (S1). Fail-closed secrets loading (0600-enforced
+      env file, environment override), a deployment descriptor as the single installer-edited file,
+      and `homeops.cli validate`: offline lint that refuses partial entity maps, cross-house entity
+      collapse, missing persistent audit in real mode, and unauthenticated exposure.
+- [x] **Part 9 — Read-only preflight commissioning** (S1). `homeops.cli preflight`: GET-only probes
+      of live HA/OPNsense proving token validity, that every mapped entity exists, that each
+      mapping's HA domain is plausible for its subsystem, and current device availability — the
+      maximal hardware-facing verification possible without actuation. The residual gap is
+      irreducible in software: supervised actuation trials with a human at each device.
 
 ## Not in scope for these parts (require the real world)
 - Independent security review / penetration test of the actuation plane.
