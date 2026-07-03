@@ -3,6 +3,8 @@
     python -m homeops.cli status
     python -m homeops.cli command house_a light living_room turn_on
     python -m homeops.cli ask [house_a]                       # resident chat (confirm/deny/house X/exit)
+    python -m homeops.cli soc [house_a]                      # Home-SOC situation report (readiness/incidents/drift)
+    python -m homeops.cli twin [house_a]                     # estate digital twin (risk by room/subsystem/device)
     python -m homeops.cli safety-case                        # run the safety case (claims -> live tests)
     python -m homeops.cli certify <estate> <key> [deploy.yaml]  # signed commissioning certificate
     python -m homeops.cli validate  deploy/deployment.yaml   # static, offline lint (exit 1 on fail)
@@ -95,6 +97,18 @@ def main(argv: list[str]) -> int:
         return 0
     if argv[0] == "ask":
         return ask(world, argv[1] if len(argv) > 1 else "house_a")
+    if argv[0] == "soc":
+        from . import soc as _soc
+        import json as _json
+        house = argv[1] if len(argv) > 1 else "house_a"
+        print(_json.dumps(_soc.situation_report(world, house), indent=2, default=str))
+        return 0
+    if argv[0] == "twin":
+        from .twin import EstateTwin
+        import json as _json
+        house = argv[1] if len(argv) > 1 else "house_a"
+        print(_json.dumps(EstateTwin(world).to_dict(house), indent=2, default=str))
+        return 0
     if argv[0] == "safety-case":
         from .safety_case import verify_safety_case
         rep = verify_safety_case(run="--fast" not in argv)

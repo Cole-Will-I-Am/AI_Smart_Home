@@ -59,6 +59,10 @@ SAFETY_CASE: tuple[Claim, ...] = (
     Claim("SC-12", "Two properties can never collapse onto one physical device.",
           ("tests/test_deployment_validation.py::test_two_houses_cannot_collapse_onto_one_real_entity",
            "tests/test_preflight.py::test_implausible_domain_fails")),
+    Claim("SC-13", "The operational-intelligence layer (SOC, digital twin) observes only — it holds no authority and never actuates.",
+          ("tests/test_soc.py::test_soc_never_actuates",
+           "tests/test_twin.py::test_twin_is_readonly_and_rebuildable",
+           "tests/test_soc.py::test_offline_safety_device_is_not_ready_even_if_state_looks_safe")),
 )
 
 
