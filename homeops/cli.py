@@ -1,7 +1,10 @@
-"""Tiny operator CLI: show both houses, issue a house-scoped command, watch the audit log.
+"""Tiny operator CLI: status, commands, and the ops lifecycle (validate -> preflight -> serve).
 
     python -m homeops.cli status
     python -m homeops.cli command house_a light living_room turn_on
+    python -m homeops.cli validate  deploy/deployment.yaml   # static, offline lint (exit 1 on fail)
+    python -m homeops.cli preflight deploy/deployment.yaml   # read-only live commissioning checks
+    python -m homeops.cli serve     deploy/deployment.yaml   # long-running service (systemd unit)
 """
 from __future__ import annotations
 import sys
@@ -30,6 +33,22 @@ def main(argv: list[str]) -> int:
                                  Operator("owner", house, "cli"))
         print(f"{r.status}: {r.message}" + (f"  (confirm token: {r.confirm_token})" if r.confirm_token else ""))
         return 0
+    if argv[0] in ("validate", "preflight", "serve") and len(argv) >= 2:
+        from .deployment import load_deployment, validate_deployment, has_failures, render_results
+        from .secrets import load_secrets
+        dep = load_deployment(argv[1])
+        secrets = load_secrets(dep.secrets_file)
+        if argv[0] == "validate":
+            res = validate_deployment(dep, dash_token_present=bool(secrets.get("HOMEOPS_DASH_TOKEN")))
+            print(render_results(res, f"validate {argv[1]}"))
+            return 1 if has_failures(res) else 0
+        if argv[0] == "preflight":
+            from .preflight import run_preflight, render_report, failed
+            checks = run_preflight(dep, secrets)
+            print(render_report(checks))
+            return 1 if failed(checks) else 0
+        from .service import Service
+        return Service(dep, secrets=secrets).run()
     print(__doc__)
     return 1
 
