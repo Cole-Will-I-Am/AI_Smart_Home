@@ -14,6 +14,7 @@
 ![cloud](https://img.shields.io/badge/cloud-none%20required-2f6bff?labelColor=0b1c40)
 ![models](https://img.shields.io/badge/models-any%20chat--completions%20model-2f6bff?labelColor=0b1c40)
 ![status](https://img.shields.io/badge/status-reference%20implementation-d29922?labelColor=0b1c40)
+![license](https://img.shields.io/badge/license-Apache--2.0-2f6bff?labelColor=0b1c40)
 
 [**DESIGN.md**](DESIGN.md) · [**Strategy**](docs/STRATEGY.md) · [**Productization**](docs/PRODUCTIZATION.md) · [**housecommand.manticthink.com**](https://housecommand.manticthink.com)
 
@@ -267,11 +268,14 @@ panel · UPS + NAS (ZFS) · WireGuard remote access.
 
 ## License
 
-**Copyright © 2026 Colton Williams. All rights reserved.** This is **not** open-source software.
-The repository is public for viewing, but no rights are granted: you may not copy, modify,
-redistribute, deploy, or use the Work commercially without prior written permission. Public
-visibility and reserved rights are orthogonal — absent an explicit grant, copyright's default is
-that all rights remain with the author. See [`LICENSE`](LICENSE). Licensing inquiries welcome.
+**Copyright © 2026 Colton Williams. Licensed under the [Apache License 2.0](LICENSE).**
+
+Open source. You may use, modify, and distribute this software — including commercially —
+under the terms of Apache-2.0, which adds an explicit patent grant and requires preservation
+of the [`NOTICE`](NOTICE). This is a *reference implementation*: the license grants rights to
+the code, not a warranty of fitness. Real deployment against physical systems still requires the
+independent review, professional installation, and liability structure described below and in
+[`docs/STRATEGY.md`](docs/STRATEGY.md) — the durable moat was never the source, so the source is open.
 
 ---
 
