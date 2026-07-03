@@ -23,3 +23,12 @@ deployment:
   # real mode + event_bridge: HA entity -> local event translation
   event_map: {}
   #   binary_sensor.hc_a_leak_kitchen: {type: leak, house_id: house_a, when: "on"}
+
+  # --- Bring any model (Part 17). The engine is the socket; the model is a plug. ---------
+  # ai:
+  #   provider: openai-compatible        # anthropic | openai | openai-compatible | none
+  #   model: qwen3:14b                   # REQUIRED for openai-compatible
+  #   base_url: http://127.0.0.1:11434/v1   # Ollama on-prem: the whole loop stays local
+  #   key_env: HOMEOPS_AI_KEY            # optional bearer; hosted endpoints (OpenRouter, ...) need it
+  #   # A non-loopback endpoint MUST be https — the estate snapshot travels in every request.
+  #   # allow_insecure: true is the explicit, linted exception for a trusted VLAN.

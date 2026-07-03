@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import ipaddress
 import os
+import urllib.parse
 
 import yaml
 
@@ -34,6 +35,7 @@ class DeploymentConfig:
     secrets_file: str | None = None
     entity_map: dict[str, str] = field(default_factory=dict)
     event_map: dict = field(default_factory=dict)
+    ai: dict = field(default_factory=dict)   # BYO-model plug (Part 17); see providers.provider_from_config
     source_path: str | None = None
 
 
@@ -62,6 +64,7 @@ def load_deployment(path: str) -> DeploymentConfig:
         secrets_file=_p(dep.get("secrets_file")),
         entity_map=dict(dep.get("entity_map") or {}),
         event_map=dict(dep.get("event_map") or {}),
+        ai=dict(dep.get("ai") or {}),
         source_path=os.path.abspath(path),
     )
     return cfg
@@ -137,6 +140,33 @@ def validate_deployment(dep: DeploymentConfig, dash_token_present: bool = False)
         fail("dashboard.bind",
              f"{dep.dash_host}:{dep.dash_port} is non-loopback and HOMEOPS_DASH_TOKEN is unset — "
              "refusing an unauthenticated network-facing surface")
+
+    # BYO-model plug (Part 17): static checks only — never constructs a client
+    if dep.ai:
+        prov = str(dep.ai.get("provider", "none")).lower().replace("_", "-")
+        if prov in ("none", "off", ""):
+            ok("ai.provider", "none — deterministic-only (always safe)")
+        elif prov in ("anthropic", "openai"):
+            ok("ai.provider", f"{prov} (SDK; key via {dep.ai.get('key_env', prov.upper() + '_API_KEY')})")
+        elif prov == "openai-compatible":
+            base = dep.ai.get("base_url")
+            if not base:
+                fail("ai.base_url", "openai-compatible requires an explicit base_url")
+            else:
+                host = urllib.parse.urlparse(base).hostname or ""
+                if base.startswith("http://") and not _is_loopback(host) and not dep.ai.get("allow_insecure"):
+                    fail("ai.transport",
+                         f"{base} is plaintext and non-loopback — the estate snapshot travels in every "
+                         "request; use https or set ai.allow_insecure: true explicitly")
+                else:
+                    ok("ai.transport", base)
+            if not dep.ai.get("model"):
+                fail("ai.model", "openai-compatible requires an explicit model name")
+            else:
+                ok("ai.model", str(dep.ai["model"]))
+        else:
+            fail("ai.provider", f"unknown provider {dep.ai.get('provider')!r} "
+                                "(anthropic | openai | openai-compatible | none)")
 
     if dep.event_bridge and dep.mode == "real":
         try:
