@@ -21,6 +21,8 @@ never to the model:
     not consume budget.
 """
 from __future__ import annotations
+import json
+import os
 from dataclasses import dataclass, field
 from datetime import date, datetime
 
@@ -81,7 +83,9 @@ class Delegation:
                 "args_within": {k: list(v) for k, v in self.args_within.items()} if self.args_within else None,
                 "budget_per_day": self.budget_per_day,
                 "expires": self.expires.isoformat() if self.expires else None,
-                "revoked": self.revoked}
+                "revoked": self.revoked,
+                "used_today": self.used_today,
+                "day": self._day.isoformat() if self._day else None}
 
     @classmethod
     def from_dict(cls, d: dict) -> "Delegation":
@@ -91,15 +95,40 @@ class Delegation:
                    args_within={k: tuple(v) for k, v in d["args_within"].items()} if d.get("args_within") else None,
                    budget_per_day=d.get("budget_per_day", 4),
                    expires=date.fromisoformat(d["expires"]) if d.get("expires") else None,
-                   revoked=bool(d.get("revoked", False)))
+                   revoked=bool(d.get("revoked", False)),
+                   used_today=int(d.get("used_today", 0)),
+                   _day=date.fromisoformat(d["day"]) if d.get("day") else None)
 
 
 class DelegationRegistry:
     """Holds the estate's standing-consent certificates. Clock is injectable for tests."""
 
-    def __init__(self, clock=None) -> None:
+    def __init__(self, clock=None, path=None) -> None:
         self.clock = clock or datetime.now
         self._delegations: dict[str, Delegation] = {}
+        self._path = path                      # R6: None = in-memory; a path persists standing consent
+        if path and os.path.exists(path):
+            self._load()
+
+    # --- R6: durable standing consent across restart -------------------------------------
+    def _save(self) -> None:
+        if not self._path:
+            return
+        tmp = self._path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump([d.to_dict() for d in self._delegations.values()], f)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self._path)   # atomic — a crash never leaves a half-written registry
+
+    def _load(self) -> None:
+        with open(self._path) as f:
+            for e in json.load(f):
+                d = Delegation.from_dict(e)
+                self._delegations[d.id] = d
+
+    def persist(self) -> None:
+        """R6: record a mutation made outside grant/revoke (e.g. a consumed daily budget)."""
+        self._save()
 
     def grant(self, d: Delegation, by: Operator) -> Delegation:
         """Admit a certificate — after checking BOTH the action (delegable level) and the
@@ -120,12 +149,14 @@ class DelegationRegistry:
         if by.max_level is not None and lvl > by.max_level:
             raise PermissionError(f"grantor role caps at L{by.max_level}; cannot delegate an L{lvl} action")
         self._delegations[d.id] = d
+        self._save()
         return d
 
     def revoke(self, did: str) -> bool:
         d = self._delegations.get(did)
         if d is not None:
             d.revoked = True
+            self._save()
         return d is not None
 
     def match(self, intent: Intent) -> Delegation | None:
@@ -164,6 +195,7 @@ def try_delegated_execute(world, intent: Intent, registry: DelegationRegistry):
     if not res.ok:
         return None, None
     d.used_today += 1
+    registry.persist()   # R6: a consumed daily budget must survive a restart
     world.router.audit.record(AuditRecord(
         tick=eng.tick, operator="owner", house_id=intent.house_id,
         subsystem="advisory", target=d.id, action="delegation_used",
