@@ -11,8 +11,14 @@ already-validated intents.
 """
 from __future__ import annotations
 import json
+import re
 import ssl
 from typing import Any, Callable
+
+# H3: a well-formed HA entity_id is `<domain>.<object_id>`; both halves are lowercase
+# alphanumeric + underscore. Anything else (slashes, '..', spaces, uppercase, control chars)
+# is refused before it can reach a request path.
+_SAFE_ENTITY_ID = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
 
 from .base import Adapter
 from .http import HttpClient, Transport
@@ -21,6 +27,10 @@ from ..events import Event, EventBus
 
 # Reversible HA domains: prior state maps cleanly to an inverse service.
 _REVERSIBLE = {"light", "switch", "lock", "cover", "valve", "alarm_control_panel"}
+
+# H3: the only alarm arm modes HA defines. `alarm_arm_<mode>` is a request PATH segment, so the
+# mode is whitelisted rather than interpolated raw.
+_ALARM_ARM_MODES = {"home", "away", "night", "vacation", "custom_bypass"}
 
 # Safety-impacting (domain, service) -> the state the device MUST reach for the command to
 # count as executed. These get post-actuation verification (read-back) so "executed" means
@@ -103,7 +113,13 @@ def map_intent(intent: Intent, announce_service: tuple[str, str] = ("notify", "n
         return "button", "press", {}
     if s == "alarm":
         if a == "arm":
-            return "alarm_control_panel", "alarm_arm_" + args.get("mode", "home"), {}
+            # H3: the mode becomes part of the request PATH; never interpolate an untrusted value.
+            # Home Assistant only defines these arm services — anything else is rejected here rather
+            # than sent as e.g. alarm_arm_away/../../../states.
+            mode = str(args.get("mode", "home"))
+            if mode not in _ALARM_ARM_MODES:
+                return None
+            return "alarm_control_panel", "alarm_arm_" + mode, {}
         if a == "disarm":
             return "alarm_control_panel", "alarm_disarm", {}
         if a == "escalate":
@@ -140,6 +156,12 @@ class HomeAssistantAdapter(Adapter):
         if mapped is None and self.strict_entity_map:
             return None   # fail closed — no house-stripped fallback
         ha_entity = mapped or f"{domain}.{intent.target}"
+        # H3: ha_entity is interpolated into /api/states/<id> and the service body. In non-strict
+        # mode it derives from intent.target, which on the AI path is model-controlled. Reject any
+        # id that could escape the intended endpoint (path traversal, slashes, whitespace, control
+        # chars). A legitimate HA entity_id is `<domain>.<object_id>` over [a-z0-9_.].
+        if not _SAFE_ENTITY_ID.match(ha_entity):
+            return None
         return domain, service, dict(data), ha_entity
 
     def _get_state(self, ha_entity: str) -> dict | None:

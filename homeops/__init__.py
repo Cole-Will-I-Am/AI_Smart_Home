@@ -5,3 +5,5 @@ for the canonical two-house model. This package simulates both houses entirely i
 software: no physical hardware, no real Home Assistant / OPNsense instance.
 """
 from .bootstrap import build_world, build_real_world, start_event_bridge, World  # noqa: F401
+
+__all__ = ["build_world", "build_real_world", "start_event_bridge", "World"]

@@ -89,8 +89,16 @@ class CommandRouter:
         needs_confirm = (intent.subsystem, intent.action) in CONFIRM_REQUIRED or violation is not None
         if operator.kind == "ai" and level >= 2:
             needs_confirm = True   # AI's L2+ control is conditioned on a human confirmation
+        # H4: a token, once validated here, must not be consumed until the action actually
+        # actuates — otherwise a later gate (rate/health/cooldown/hardware) refuses and the human's
+        # single-use token is silently spent. So we PEEK for authorization and remember to consume
+        # at the point of actuation.
+        consume_token_at_actuation = False
         if needs_confirm:
-            authorized = (operator.kind == "system" and intent.emergency) or eng.check_token(intent, operator)
+            by_emergency = operator.kind == "system" and intent.emergency
+            by_token = eng.peek_token(intent, operator)
+            consume_token_at_actuation = by_token
+            authorized = by_emergency or by_token
             if not authorized:
                 # The AI cannot self-confirm — a human must. So it gets no usable token,
                 # only the signal that human confirmation is required. Only the OWNER receives
@@ -133,6 +141,12 @@ class CommandRouter:
                 return self._audit(intent, operator, "refused",
                                    f"AI daily L1 budget exhausted for {intent.house_id} "
                                    f"({eng._ai_l1_budget}/day) — nuisance guard", level)
+
+        # H4: every refusal gate is now behind us — spend the single-use token at the moment of
+        # actuation, not at authorization. A gate above returned before reaching this line, so a
+        # refused confirmed action leaves its token intact and re-confirmable.
+        if consume_token_at_actuation:
+            eng.consume_token(intent)
 
         res = self.adapter.apply(intent)
         if not res.get("ok"):

@@ -5,7 +5,7 @@ description = "Two-house AI ops layer — runnable mocked reference implementati
 license = "Apache-2.0"
 authors = [{ name = "Colton Williams" }]
 requires-python = ">=3.10"
-dependencies = ["PyYAML>=6.0"]
+dependencies = ["PyYAML>=6.0,<7.0"]
 
 [project.optional-dependencies]
 # BYO-model at the terminal needs no vendor SDK for OpenAI-compatible/Ollama endpoints (stdlib

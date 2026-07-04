@@ -284,15 +284,29 @@ class PermissionEngine:
         self._tokens[tok] = (self._key(intent, operator), self.tick + ttl)
         return tok
 
-    def check_token(self, intent: Intent, operator: "Operator") -> bool:
+    def peek_token(self, intent: Intent, operator: "Operator") -> bool:
+        """Validate the token WITHOUT consuming it (H4). The router authorizes with this, then
+        runs every remaining gate (hardware, rate, health, cooldown), and only calls
+        consume_token immediately before actuation. A token is therefore spent exactly when the
+        action executes — never burned by a later refusal, which used to strand it and force the
+        human to restart the whole confirmation dance."""
         tok = intent.confirm_token
         if not tok or tok not in self._tokens:
             return False
         key, expiry = self._tokens[tok]
         # bound to the EXACT intent (incl. args) AND the same operator, and not expired
-        if key != self._key(intent, operator) or self.tick > expiry:
+        return key == self._key(intent, operator) and self.tick <= expiry
+
+    def consume_token(self, intent: Intent) -> None:
+        """Single-use: called by the router at the point of actuation, after all gates pass."""
+        self._tokens.pop(intent.confirm_token, None)
+
+    def check_token(self, intent: Intent, operator: "Operator") -> bool:
+        """Validate AND consume in one step. Retained for callers that actuate immediately after
+        authorizing (e.g. delegation's engine-side dance); the router uses peek + consume."""
+        if not self.peek_token(intent, operator):
             return False
-        del self._tokens[tok]   # single-use
+        self.consume_token(intent)
         return True
 
     # --- rate limiting -------------------------------------------------------

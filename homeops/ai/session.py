@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from ..delegations import DelegationRegistry, try_delegated_execute
 from ..permissions import Intent, Operator
 from .fallback import deterministic_response
-from .ops_layer import MODEL, OpsLayer
+from .ops_layer import OpsLayer
 from .prompts import SYSTEM_PROMPT, render_snapshot
 from .tools import TOOLS
 
@@ -107,42 +107,56 @@ class ChatSession:
 
         actions: list[dict] = []
         final_text = ""
-        for _ in range(self.max_tool_turns):
-            comp = self.provider.complete(model=self.model, system=SYSTEM_PROMPT,
-                                          tools=TOOLS, transcript=self.messages)
-            if comp.stop == "refusal":
-                return {"mode": "ai", "final": "request refused by safety classifier",
-                        "actions": actions, "pending": [p.describe() for p in self.pending], "refusal": True}
-            if comp.text:
-                final_text = comp.text
-            self.messages.append({"role": "assistant", "text": comp.text,
-                                  "tool_calls": [{"id": t.id, "name": t.name, "input": t.input}
-                                                 for t in comp.tool_calls]})
-            if not comp.tool_calls:
-                break
-            results = []
-            for tc in comp.tool_calls:
-                out = self.ops._run_tool(tc.name, tc.input, self.active_house)
-                # Part 15: a standing delegation may cover this proposal. The dance happens
-                # engine-side under the grantor's identity; the model only sees the outcome.
-                if (tc.name == "propose_command" and self.delegations is not None
-                        and out.get("status") == "confirm_required"):
-                    src = tc.input
-                    intent = Intent(house_id=src.get("house_id", self.active_house),
-                                    subsystem=src["subsystem"], target=src["target"],
-                                    action=src["action"], args=dict(src.get("args") or {}))
-                    d_res, d = try_delegated_execute(self.world, intent, self.delegations)
-                    if d_res is not None:
-                        out = {"status": d_res.status, "level": d_res.level, "delegation": d.id,
-                               "message": f"executed under standing delegation {d.id}: {d_res.message}"}
-                out.pop("confirm_token", None)   # belt-and-braces: the engine already issues none to "ai"
-                if tc.name in ("propose_command", "recommend"):
-                    entry = {"tool": tc.name, **out}
-                    if tc.name == "propose_command":
-                        entry["intent"] = dict(tc.input)
-                    actions.append(entry)
-                results.append({"id": tc.id, "name": tc.name, "output": out})
-            self.messages.append({"role": "tools", "results": results})
+        turn_start = self._turn_starts[-1]   # M1: rollback point if a provider call fails mid-turn
+        try:
+            for _ in range(self.max_tool_turns):
+                comp = self.provider.complete(model=self.model, system=SYSTEM_PROMPT,
+                                              tools=TOOLS, transcript=self.messages)
+                if comp.stop == "refusal":
+                    return {"mode": "ai", "final": "request refused by safety classifier",
+                            "actions": actions, "pending": [p.describe() for p in self.pending], "refusal": True}
+                if comp.text:
+                    final_text = comp.text
+                self.messages.append({"role": "assistant", "text": comp.text,
+                                      "tool_calls": [{"id": t.id, "name": t.name, "input": t.input}
+                                                     for t in comp.tool_calls]})
+                if not comp.tool_calls:
+                    break
+                results = []
+                for tc in comp.tool_calls:
+                    out = self.ops._run_tool(tc.name, tc.input, self.active_house)
+                    # Part 15: a standing delegation may cover this proposal. The dance happens
+                    # engine-side under the grantor's identity; the model only sees the outcome.
+                    if (tc.name == "propose_command" and self.delegations is not None
+                            and out.get("status") == "confirm_required"):
+                        src = tc.input
+                        intent = Intent(house_id=src.get("house_id", self.active_house),
+                                        subsystem=src["subsystem"], target=src["target"],
+                                        action=src["action"], args=dict(src.get("args") or {}))
+                        d_res, d = try_delegated_execute(self.world, intent, self.delegations)
+                        if d_res is not None:
+                            out = {"status": d_res.status, "level": d_res.level, "delegation": d.id,
+                                   "message": f"executed under standing delegation {d.id}: {d_res.message}"}
+                    out.pop("confirm_token", None)   # belt-and-braces: the engine already issues none to "ai"
+                    if tc.name in ("propose_command", "recommend"):
+                        entry = {"tool": tc.name, **out}
+                        if tc.name == "propose_command":
+                            entry["intent"] = dict(tc.input)
+                        actions.append(entry)
+                    results.append({"id": tc.id, "name": tc.name, "output": out})
+                self.messages.append({"role": "tools", "results": results})
+        except Exception as e:                       # noqa: BLE001 — provider/transport failure
+            # M1: a raised completion left this ask()'s partial messages in the transcript. Rewind
+            # to the start of the turn (dropping the orphaned user message and any half-turn), so
+            # the next ask() cannot produce two consecutive user turns — which most chat APIs reject
+            # — then degrade to the deterministic, still-audited fallback for this request.
+            self.messages = self.messages[:turn_start]
+            self._turn_starts.pop()
+            out = deterministic_response(self.world, text, self.active_house)
+            out["degraded"] = f"AI layer unavailable ({type(e).__name__}); used deterministic fallback"
+            self._register_pending(out.get("actions", []))
+            out["pending"] = [p.describe() for p in self.pending]
+            return out
         self._register_pending(actions)
         return {"mode": "ai", "final": final_text, "actions": actions,
                 "pending": [p.describe() for p in self.pending]}

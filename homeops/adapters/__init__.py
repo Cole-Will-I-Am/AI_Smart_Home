@@ -4,3 +4,5 @@ from .opnsense import OPNsenseAdapter  # noqa: F401
 from .composite import CompositeAdapter  # noqa: F401
 from .per_property import PerPropertyAdapter  # noqa: F401
 from .http import HttpClient  # noqa: F401
+
+__all__ = ["SimAdapter", "HomeAssistantAdapter", "OPNsenseAdapter", "CompositeAdapter", "PerPropertyAdapter", "HttpClient"]

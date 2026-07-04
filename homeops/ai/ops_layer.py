@@ -64,12 +64,24 @@ class OpsLayer:
                                    Operator("ai", active_house, "ai-ops"))
             return {"status": r.status, "message": r.message}
         if name == "propose_command":
+            # H2: the model is untrusted by construction (Part 17 admits a fully hostile endpoint),
+            # so a malformed tool call must be REFUSED, never crash the loop. Missing required
+            # fields and a non-dict `args` (a documented local-model dialect) both used to raise
+            # out of run()/ask() and kill the turn.
+            missing = [k for k in ("subsystem", "target", "action") if not args.get(k)]
+            if missing:
+                return {"status": "refused", "level": None,
+                        "message": f"malformed propose_command: missing {', '.join(missing)}"}
+            raw_args = args.get("args", {})
+            if not isinstance(raw_args, dict):
+                return {"status": "refused", "level": None,
+                        "message": f"malformed propose_command: args must be an object, got {type(raw_args).__name__}"}
             # Note: the AI cannot set confirm_cross_house or confirm_token — a human must confirm
             # cross-house and L2+ actions. Cross-house proposals from the AI return confirm_required.
             intent = Intent(
-                house_id=args.get("house_id", active_house),
-                subsystem=args["subsystem"], target=args["target"], action=args["action"],
-                args=args.get("args", {}) or {},
+                house_id=args.get("house_id") or active_house,
+                subsystem=str(args["subsystem"]), target=str(args["target"]), action=str(args["action"]),
+                args=raw_args,
             )
             r = w.router.execute(intent, Operator("ai", active_house, "ai-ops"))
             out = {"status": r.status, "message": r.message, "level": r.level}

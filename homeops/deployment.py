@@ -10,6 +10,7 @@ homeops.preflight.
 """
 from __future__ import annotations
 from dataclasses import dataclass, field
+import importlib.util
 import ipaddress
 import os
 import urllib.parse
@@ -174,10 +175,9 @@ def validate_deployment(dep: DeploymentConfig, dash_token_present: bool = False)
             ok("ai.l1_daily_budget", f"{b} AI-originated L1 actuations/house/day")
 
     if dep.event_bridge and dep.mode == "real":
-        try:
-            import websocket  # noqa: F401
+        if importlib.util.find_spec("websocket") is not None:
             ok("event_bridge.dep", "websocket-client available")
-        except ImportError:
+        else:
             fail("event_bridge.dep", "event_bridge=true but the optional websocket-client package is missing")
     return out
 
