@@ -56,8 +56,8 @@ class PendingConfirmation:
 
 class ChatSession:
     def __init__(self, world, client=None, model: str | None = None, active_house: str = "house_a",
-                 operator: Operator | None = None, max_tool_turns: int = 6,
-                 max_history_turns: int = 10, delegations: DelegationRegistry | None = None) -> None:
+                 operator: Operator | None = None, max_tool_turns: int = 16,
+                 max_history_turns: int = 30, delegations: DelegationRegistry | None = None) -> None:
         self.world = world
         self.ops = OpsLayer(world, client=client, model=model)
         self.client = client

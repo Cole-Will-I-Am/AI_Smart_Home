@@ -47,7 +47,7 @@ class World:
 
 
 def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = True, adapter=None,
-                audit_path: str | None = None, ai_l1_daily_budget: int = 60,
+                audit_path: str | None = None, ai_l1_daily_budget: int = 600,
                 attest_key: bytes | None = None, persist_dir: str | None = None) -> World:
     """Build the world. `adapter=None` uses the in-process SimAdapter (default, for tests/demos);
     pass a real adapter (e.g. CompositeAdapter of HomeAssistantAdapter+OPNsenseAdapter) to drive

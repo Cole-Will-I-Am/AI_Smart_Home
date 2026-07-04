@@ -167,7 +167,7 @@ class OpsLayer:
             return {"records": [], "message": err}
         allowed = set(houses)
         try:
-            count = max(1, min(100, int(n)))
+            count = max(1, min(500, int(n)))
         except (TypeError, ValueError):
             count = 20
         recs = [r for r in self.world.audit.records if r.house_id in allowed][-count:]
@@ -409,7 +409,7 @@ class OpsLayer:
         return {"error": f"unknown tool {name}"}
 
     # --- main loop -----------------------------------------------------------
-    def run(self, goal: str, active_house: str, max_turns: int = 6) -> dict:
+    def run(self, goal: str, active_house: str, max_turns: int = 16) -> dict:
         w = self.world
         house = w.houses[active_house]
         if self.client is None or not house.wan_up or house.ai_hold:

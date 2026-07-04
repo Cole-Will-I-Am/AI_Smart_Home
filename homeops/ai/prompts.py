@@ -75,7 +75,7 @@ def render_snapshot(world, active_house: str, operator=None) -> str:
         full = {"lock", "alarm", "water", "power", "battery", "generator", "hvac"}
         for sub in ("lock", "alarm", "water", "power", "battery", "generator", "hvac", "sensor", "light"):
             ents = [e for e in house.entities.values() if e.subsystem == sub]
-            cap = None if sub in full else 8
+            cap = None   # full situational awareness — perception is free (L0)
             shown = ", ".join(f"{e.name}={e.state}" for e in (ents if cap is None else ents[:cap]))
             if shown:
                 lines.append(f"  {sub}: {shown}")

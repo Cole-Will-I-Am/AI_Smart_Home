@@ -94,6 +94,7 @@ def test_legitimate_alarm_arm_still_works():
 
 # --- H4: a confirmation token is not burned by a later refusal --------------------------
 def test_token_survives_a_rate_limited_confirm(bare):
+    bare.engine._rate_limit = 5   # pin the guard: test the mechanism, not the (now-generous) default
     op = Operator("owner", "house_a", "resident")
     for _ in range(5):                             # exhaust the per-tick rate budget for (house_a, lock)
         bare.router.execute(Intent("house_a", "lock", "front_door", "lock"), op)

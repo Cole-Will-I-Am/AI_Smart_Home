@@ -239,7 +239,7 @@ class Result:
 
 
 class PermissionEngine:
-    def __init__(self, rate_limit: int = 5, ai_l1_daily_budget: int = 60,
+    def __init__(self, rate_limit: int = 50, ai_l1_daily_budget: int = 600,
                  attest_key: bytes | None = None) -> None:
         self._tokens: dict[str, tuple[str, int]] = {}   # token -> (intent+operator key, expiry_tick)
         self._rate_limit = rate_limit

@@ -131,6 +131,7 @@ def test_unknown_house_via_chat_never_enters_pending(bare):
 
 # ---- flooding ------------------------------------------------------------------------
 def test_rate_limit_holds_per_tick(bare):
+    bare.engine._rate_limit = 5   # pin the guard: test the mechanism, not the (now-generous) default
     got = [bare.router.execute(Intent("house_a", "light", "kitchen",
                                       "turn_on" if i % 2 == 0 else "turn_off"), OWNER())
            for i in range(7)]

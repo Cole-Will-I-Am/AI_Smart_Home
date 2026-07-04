@@ -69,7 +69,7 @@ class Delegation:
     action: str                          # exact action, or "*" for standing authority
     window: tuple[int, int] | None = None       # (start_hour, end_hour) inclusive; wraps midnight if start > end
     args_within: dict | None = None             # declarative arg envelope: key -> (lo, hi)
-    budget_per_day: int = 4
+    budget_per_day: int = 200
     expires: date | None = None
     revoked: bool = False
     max_level: int | None = None                # only for wildcard standing-authority certs
@@ -130,7 +130,7 @@ class Delegation:
                    subsystem=d["subsystem"], action=d["action"],
                    window=tuple(d["window"]) if d.get("window") else None,
                    args_within={k: tuple(v) for k, v in d["args_within"].items()} if d.get("args_within") else None,
-                   budget_per_day=d.get("budget_per_day", 4),
+                   budget_per_day=d.get("budget_per_day", 200),
                    expires=date.fromisoformat(d["expires"]) if d.get("expires") else None,
                    revoked=bool(d.get("revoked", False)),
                    max_level=d.get("max_level"),
@@ -262,7 +262,7 @@ def try_delegated_execute(world, intent: Intent, registry: DelegationRegistry):
 
 
 def grant_standing_authority(grantor: Operator, house_id: str, max_level: int,
-                             window: tuple[int, int] | None = None, budget: int = 4,
+                             window: tuple[int, int] | None = None, budget: int = 200,
                              expiry: date | None = None,
                              args_within: dict | None = None,
                              registry: DelegationRegistry | None = None) -> Delegation:

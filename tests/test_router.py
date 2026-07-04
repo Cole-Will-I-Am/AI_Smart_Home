@@ -7,6 +7,7 @@ def owner():
 
 
 def test_rate_limit(bare):
+    bare.engine._rate_limit = 5   # pin the guard: test the mechanism, not the (now-generous) default
     statuses = [bare.router.execute(Intent("house_a", "light", "living_room", "turn_on"), owner()).status
                 for _ in range(8)]
     assert statuses.count("executed") <= 5
