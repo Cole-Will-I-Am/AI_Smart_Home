@@ -2,6 +2,8 @@
 travels engine -> human -> engine and provably never enters the model's context."""
 import json
 
+import pytest
+
 from homeops.ai.session import ChatSession
 from homeops.permissions import Operator
 
@@ -130,6 +132,22 @@ def test_history_trims_whole_turns_only(world):
 
 
 def test_human_operator_required(world):
-    import pytest
     with pytest.raises(ValueError):
         ChatSession(world, operator=Operator(kind="ai", active_house="house_a", name="sneaky"))
+
+
+def test_scoped_operator_snapshot_excludes_other_houses_and_switch_is_checked(world):
+    client = MockClient([Resp([text("ok")], stop_reason="end_turn")])
+    op = Operator(kind="owner", active_house="house_a", name="manager", houses={"house_a"})
+    s = ChatSession(world, client=client, operator=op)
+
+    out = s.ask("status")
+
+    assert out["mode"] == "ai"
+    first_call = client.messages.calls[0]
+    assert "[house_a]" in first_call
+    assert "[house_b]" not in first_call and "house_b." not in first_call
+    with pytest.raises(PermissionError):
+        s.switch_house("house_b")
+    with pytest.raises(PermissionError):
+        ChatSession(world, client=MockClient([]), active_house="house_b", operator=op)

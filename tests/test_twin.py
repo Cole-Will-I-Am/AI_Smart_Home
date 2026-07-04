@@ -2,7 +2,7 @@
 Invariants: the twin is READ-ONLY and rebuildable; risk is a transparent, declared function;
 authority levels come from the real engine, not a copy."""
 from homeops import soc
-from homeops.twin import CRITICALITY, EstateTwin
+from homeops.twin import CRITICALITY, EstateTwin, PRIMARY_ACTION
 from homeops.simulator import scenarios
 
 
@@ -19,6 +19,13 @@ def test_authority_levels_come_from_the_engine(world):
     assert lock.authority_level == world.engine.level("lock", "unlock")
     water = next(d for d in t.devices.values() if d.subsystem == "water" and "main" in d.name)
     assert water.authority_level == world.engine.level("water", "shutoff_main")
+
+
+def test_every_twin_primary_action_maps_to_engine_level(world):
+    for subsystem, action in PRIMARY_ACTION.items():
+        if action is None:
+            continue
+        assert world.engine.level(subsystem, action) is not None, (subsystem, action)
 
 
 def test_risk_rises_with_exposure_then_health(world):

@@ -107,6 +107,11 @@ class Gateway:
         # authenticated principal without a registered Device row (e.g. enrolled elsewhere):
         return Device(principal.id, principal, "app")
 
+    @staticmethod
+    def _in_scope(device: Device, house_id: str) -> bool:
+        scope = device.principal.houses
+        return scope == "*" or house_id in scope
+
     # ---- housekeeping ---------------------------------------------------------------------
     def _now(self) -> int:
         return self.world.router.engine.tick
@@ -181,6 +186,8 @@ class Gateway:
         if p is None:
             return {"status": "not_found", "message": f"no pending confirmation {pending_id!r} "
                                                       "(expired, denied, or already handled)"}
+        if not self._in_scope(device, p.house_id):
+            return {"status": "not_found", "message": f"no pending confirmation {pending_id!r}"}
         operator = operator_for(device.principal, active_house=p.house_id)
         cross = p.house_id != operator.active_house  # operator.active_house == p.house_id here, so False
         intent = Intent(p.intent.house_id, p.intent.subsystem, p.intent.target, p.intent.action,
@@ -216,9 +223,13 @@ class Gateway:
         if device is None:
             return {"status": "unauthorized", "message": "unknown or missing device token"}
         with self._lock:
-            p = self._pending.pop(pending_id, None)
+            p = self._pending.get(pending_id)
         if p is None:
             return {"status": "not_found", "message": f"no pending confirmation {pending_id!r}"}
+        if not self._in_scope(device, p.house_id):
+            return {"status": "not_found", "message": f"no pending confirmation {pending_id!r}"}
+        with self._lock:
+            self._pending.pop(pending_id, None)
         # audited as a first-class decision through the router's advisory path
         self.world.router.recommend(
             p.house_id, f"DENIED via {device.surface} by {device.principal.id}: "

@@ -191,6 +191,8 @@ class CommandRouter:
         if self.health is not None:
             self.health.heartbeat(intent.entity_id, eng.tick)   # the device responded
 
+        eng.commit_cooldown(intent)
+
         rollback = None
         if res.get("undo"):
             rollback = f"rb-{eng.tick}-{intent.subsystem}-{intent.target}-{len(self.audit.records)}"

@@ -343,5 +343,10 @@ class PermissionEngine:
         last = self._last_action.get(k)
         if last is not None and self.tick - last < cd:
             return False
-        self._last_action[k] = self.tick
         return True
+
+    def commit_cooldown(self, intent: Intent) -> None:
+        if (intent.subsystem, intent.action) not in DESTRUCTIVE_COOLDOWN:
+            return
+        k = (intent.house_id, intent.subsystem, intent.target, intent.action)
+        self._last_action[k] = self.tick

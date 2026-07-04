@@ -31,7 +31,7 @@ def main(argv: list[str]) -> int:
         return 1
     world = build_service_world(dep, secrets)
     gw = Gateway(world)
-    httpd = serve(gw, host=dep.dash_host, port=dep.dash_port + 1)
+    httpd = serve(gw, host=dep.dash_host, port=dep.dash_port + 1, gateway_token=gw_token)
     print(f"homeops gateway up: write path http://{dep.dash_host}:{dep.dash_port + 1}/v1 "
           f"(per-device bearer{', token-gated' if gw_token else ''})")
     try:

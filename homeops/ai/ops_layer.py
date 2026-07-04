@@ -52,10 +52,10 @@ class OpsLayer:
         return p.default_model if p else MODEL
 
     # --- tool execution ------------------------------------------------------
-    def _run_tool(self, name: str, args: dict, active_house: str) -> dict:
+    def _run_tool(self, name: str, args: dict, active_house: str, operator: Operator | None = None) -> dict:
         w = self.world
         if name == "read_state":
-            return {"state": render_snapshot(w, active_house)}
+            return {"state": render_snapshot(w, active_house, operator)}
         if name == "list_recent_events":
             evs = w.bus.recent(house_id=args.get("house_id"))
             return {"events": [{"type": e.type, "house": e.house_id, "data": e.data} for e in evs]}

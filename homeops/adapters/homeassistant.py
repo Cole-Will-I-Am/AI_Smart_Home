@@ -243,12 +243,14 @@ class HomeAssistantAdapter(Adapter):
         return create_connection(self.ws_url, sslopt=sslopt)
 
     def run_event_bridge(self, bus: EventBus, event_map: dict[str, dict],
-                         connect: Callable[[], Any] | None = None) -> None:
+                         connect: Callable[[], Any] | None = None,
+                         state=None, health=None) -> None:
         """Subscribe to HA state_changed and publish mapped events onto the bus.
 
         `event_map`: {ha_entity_id: {"type": "leak", "when": "on", "house_id": "house_a", "data": {...}}}
         Blocks until the connection closes (recv() returns None). Run in a thread in production.
         """
+        local_by_ha = {ha: local for local, ha in self.entity_map.items()}
         conn = connect() if connect else self._default_ws_connect()
         conn.recv()   # {"type":"auth_required"}
         conn.send(json.dumps({"type": "auth", "access_token": self.token}))
@@ -265,6 +267,11 @@ class HomeAssistantAdapter(Adapter):
             data = m.get("event", {}).get("data", {})
             ent = data.get("entity_id")
             new_state = (data.get("new_state") or {}).get("state")
+            local_id = local_by_ha.get(ent)
+            if local_id and state is not None and state.entity(local_id) is not None:
+                state.set_state(local_id, new_state)
+                if health is not None:
+                    health.heartbeat(local_id, state.clock())
             spec = event_map.get(ent)
             if spec and new_state == spec.get("when"):
                 bus.publish(Event(spec["type"], spec.get("house_id", ""), ent,

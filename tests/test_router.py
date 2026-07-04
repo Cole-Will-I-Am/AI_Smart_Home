@@ -1,4 +1,5 @@
 from homeops.permissions import Intent, Operator
+from homeops.simulator import devices
 
 
 def owner():
@@ -58,3 +59,57 @@ def test_out_of_envelope_thermostat_escalates_then_clamps(bare):
                confirm_token=raw.confirm_token), owner())
     assert confirmed.status == "executed"   # explicit, audited human exception
     assert bare.state.get_state("house_a.climate.thermostat_main") == 82   # device clamp still applies
+
+
+def test_failed_destructive_action_does_not_start_cooldown_but_success_does(bare):
+    op = owner()
+    devices.inject_generator_fail(bare.state, "house_a.generator.main")
+    first = bare.router.execute(Intent("house_a", "generator", "main", "start"), op)
+    failed = bare.router.execute(
+        Intent("house_a", "generator", "main", "start", confirm_token=first.confirm_token), op)
+    assert failed.status == "unverified"
+
+    devices.clear_faults(bare.state, "house_a.generator.main")
+    bare.health.heartbeat("house_a.generator.main", bare.engine.tick)
+    retry = bare.router.execute(Intent("house_a", "generator", "main", "start"), op)
+    succeeded = bare.router.execute(
+        Intent("house_a", "generator", "main", "start", confirm_token=retry.confirm_token), op)
+    assert succeeded.status == "executed"
+
+    again = bare.router.execute(Intent("house_a", "generator", "main", "start"), op)
+    blocked = bare.router.execute(
+        Intent("house_a", "generator", "main", "start", confirm_token=again.confirm_token), op)
+    assert blocked.status == "refused" and "cooldown" in blocked.message
+
+
+def test_safety_critical_rollback_succeeds_after_readback(bare):
+    op = owner()
+    first = bare.router.execute(Intent("house_a", "lock", "front_door", "unlock"), op)
+    unlocked = bare.router.execute(
+        Intent("house_a", "lock", "front_door", "unlock", confirm_token=first.confirm_token), op)
+    assert unlocked.status == "executed" and unlocked.rollback_token
+
+    assert bare.router.rollback(unlocked.rollback_token, op) is True
+    assert bare.state.get_state("house_a.lock.front_door") == "locked"
+    assert bare.audit.records[-1].status == "rollback"
+
+
+def test_safety_critical_rollback_readback_mismatch_is_unverified(bare):
+    op = owner()
+    first = bare.router.execute(Intent("house_a", "lock", "front_door", "unlock"), op)
+    unlocked = bare.router.execute(
+        Intent("house_a", "lock", "front_door", "unlock", confirm_token=first.confirm_token), op)
+    assert unlocked.status == "executed" and unlocked.rollback_token
+    original_undo = bare.adapter.undo
+
+    def no_op(undo):
+        pass
+
+    bare.adapter.undo = no_op
+    try:
+        assert bare.router.rollback(unlocked.rollback_token, op) is False
+    finally:
+        bare.adapter.undo = original_undo
+    rec = bare.audit.records[-1]
+    assert rec.status == "unverified"
+    assert bare.state.get_state("house_a.lock.front_door") == "unlocked"

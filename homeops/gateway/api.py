@@ -15,12 +15,13 @@ which is fully testable without a socket.
     GET  /v1/events[?house_id=&n=]        recent event bus
 """
 from __future__ import annotations
+import hmac
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
 
 
-def make_handler(gateway):
+def make_handler(gateway, gateway_token: str | None = None):
     gw = gateway
 
     class Handler(BaseHTTPRequestHandler):
@@ -29,6 +30,12 @@ def make_handler(gateway):
         def _bearer(self) -> str:
             got = self.headers.get("Authorization", "")
             return got[7:] if got.startswith("Bearer ") else ""
+
+        def _gateway_authorized(self) -> bool:
+            if not gateway_token:
+                return True
+            got = self.headers.get("X-Homeops-Gateway-Token", "")
+            return hmac.compare_digest(got, gateway_token)
 
         def _send(self, code: int, obj: dict) -> None:
             body = json.dumps(obj).encode()
@@ -55,6 +62,9 @@ def make_handler(gateway):
                     "refused": 200, "denied": 200}.get(s, 200)
 
         def do_GET(self):  # noqa: N802
+            if not self._gateway_authorized():
+                return self._send(401, {"status": "unauthorized",
+                                        "message": "missing or invalid gateway token"})
             u = urlparse(self.path)
             q = parse_qs(u.query)
             house = (q.get("house_id") or [None])[0]
@@ -69,6 +79,9 @@ def make_handler(gateway):
             return self._send(404, {"error": "unknown endpoint"})
 
         def do_POST(self):  # noqa: N802
+            if not self._gateway_authorized():
+                return self._send(401, {"status": "unauthorized",
+                                        "message": "missing or invalid gateway token"})
             u = urlparse(self.path)
             tok = self._bearer()
             parts = u.path.strip("/").split("/")
@@ -93,6 +106,7 @@ def make_handler(gateway):
     return Handler
 
 
-def serve(gateway, host: str = "127.0.0.1", port: int = 8799) -> ThreadingHTTPServer:
-    httpd = ThreadingHTTPServer((host, port), make_handler(gateway))
+def serve(gateway, host: str = "127.0.0.1", port: int = 8799,
+          gateway_token: str | None = None) -> ThreadingHTTPServer:
+    httpd = ThreadingHTTPServer((host, port), make_handler(gateway, gateway_token=gateway_token))
     return httpd

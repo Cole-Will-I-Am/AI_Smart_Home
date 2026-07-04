@@ -1,3 +1,4 @@
+from homeops.events import Event
 from homeops.simulator import scenarios
 
 
@@ -53,3 +54,15 @@ def test_automation_scoped_to_one_house(world):
     world.tick(2)
     # House B's valve is untouched — automations are house-scoped
     assert world.state.get_state("house_b.water.main_valve") == "open"
+
+
+def test_malformed_flow_value_does_not_abort_and_fails_closed(world):
+    world.state.set_state("house_a.sensor.leak_kitchen", "wet")
+    world.state.set_state("house_a.sensor.flow_meter", "unknown")
+
+    world.bus.publish(Event("leak", "house_a", "house_a.sensor.leak_kitchen", {}, world.engine.tick))
+
+    assert world.state.get_state("house_a.water.main_valve") == "closing"
+    assert any(n["urgent"] and "unreadable flow" in n["message"] for n in world.notifications)
+    assert any(r.status == "executed" and r.subsystem == "water" and r.action == "shutoff_main"
+               for r in world.audit.records)

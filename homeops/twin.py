@@ -97,7 +97,7 @@ class SubsystemTwin:
 # primary action per subsystem, used to look up the authority level a device demands
 PRIMARY_ACTION: dict[str, str] = {
     "light": "turn_on", "plug": "turn_on", "lock": "unlock", "garage": "open",
-    "climate": "set_temp", "hvac": "emergency_off", "water": "shutoff_main",
+    "climate": "set_temperature", "hvac": "emergency_shutoff", "water": "shutoff_main",
     "power": "breaker_off", "generator": "start", "battery": "set_mode",
     "evcharger": "set_limit", "alarm": "disarm", "camera": "set_mode",
     "scene": "activate", "speaker": "announce", "sensor": None,

@@ -162,9 +162,14 @@ def plan_day(inputs: DayInputs, battery: Battery | None = None) -> DayPlan:
     plan_hours, plan_cost = _simulate(inputs, battery, ev_kw, charge_h, discharge_h)
     base_hours, base_cost = _simulate(inputs, None, ev_kw, set(), set())
     # 4. Never-worse guarantee.
-    if plan_cost > base_cost:
+    honest_plan_cost = plan_cost
+    terminal_soc = plan_hours[-1].soc_kwh if battery and plan_hours else 0.0
+    if battery is not None and terminal_soc + 1e-9 < battery.soc_kwh:
+        replacement = (battery.soc_kwh - terminal_soc) * max(inputs.import_price)
+        honest_plan_cost = round(plan_cost + replacement, 4)
+    if honest_plan_cost > base_cost:
         return DayPlan(base_hours, base_cost, base_cost, used_baseline=True)
-    return DayPlan(plan_hours, plan_cost, base_cost)
+    return DayPlan(plan_hours, honest_plan_cost, base_cost)
 
 
 # -- a plausible deterministic day for demos / CLI ------------------------------------

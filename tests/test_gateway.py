@@ -3,10 +3,13 @@ phone, tablet, Alexa, Google, HA Assist all collapse to (Intent, Operator) and f
 router. The gateway adds device auth + a pending registry, but NO permission logic — so a
 per-surface policy can never diverge from the engine. Everything below drives the socketless
 core; the HTTP layer is a thin JSON wrapper over exactly these calls."""
+from email.message import Message
+
 import pytest
 
 from homeops import build_world
 from homeops.gateway import Gateway
+from homeops.gateway.api import make_handler
 
 
 @pytest.fixture
@@ -137,3 +140,42 @@ def test_state_is_scoped_to_the_device(gw):
     assert set(both) == {"house_a", "house_b"}
     just_a = gw.state(gw._t["tablet"])["houses"]
     assert set(just_a) == {"house_a"}     # tablet scoped to house_a only
+
+
+def test_http_gateway_token_required_before_device_auth(gw):
+    Handler = make_handler(gw, gateway_token="transport-secret")
+
+    def request(headers):
+        h = Handler.__new__(Handler)
+        h.path = "/v1/state"
+        h.headers = Message()
+        for k, v in headers.items():
+            h.headers[k] = v
+        captured = {}
+        h._send = lambda code, obj: captured.update(code=code, obj=obj)
+        h.do_GET()
+        return captured["code"], captured["obj"]
+
+    bearer = {"Authorization": f"Bearer {gw._t['phone']}"}
+    assert request(bearer)[0] == 401
+    wrong = {**bearer, "X-Homeops-Gateway-Token": "wrong"}
+    assert request(wrong)[0] == 401
+    ok = {**bearer, "X-Homeops-Gateway-Token": "transport-secret"}
+    status, body = request(ok)
+    assert status == 200 and set(body["houses"]) == {"house_a", "house_b"}
+
+
+def test_out_of_scope_device_cannot_deny_or_confirm_other_house_pending(gw):
+    r = gw.submit_intent(gw._t["phone"],
+                         _intent(house="house_b", subsystem="lock", target="front_door", action="unlock"))
+    pid = r["pending_id"]
+
+    assert gw.deny(gw._t["tablet"], pid)["status"] == "not_found"
+    assert gw.confirm(gw._t["phone"], pid)["status"] == "executed"
+    assert gw.world.state.get_state("house_b.lock.front_door") == "unlocked"
+
+    r2 = gw.submit_intent(gw._t["phone"],
+                          _intent(house="house_b", subsystem="garage", target="main", action="open"))
+    pid2 = r2["pending_id"]
+    assert gw.confirm(gw._t["tablet"], pid2)["status"] == "not_found"
+    assert gw.confirm(gw._t["phone"], pid2)["status"] == "executed"

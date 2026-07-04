@@ -66,6 +66,7 @@ class ChatSession:
         self.operator = operator or Operator(kind="owner", active_house=active_house, name="resident")
         if self.operator.kind == "ai":   # a raise, not an assert: must survive python -O
             raise ValueError("confirmations must belong to a human operator")
+        self._validate_active_house(active_house)
         self.max_tool_turns = max_tool_turns
         self.max_history_turns = max_history_turns
         # R6: default to the world's persistent registry so standing consent survives restart
@@ -103,7 +104,7 @@ class ChatSession:
             pend = "AWAITING RESIDENT CONFIRMATION:\n" + "\n".join(
                 f"  {i + 1}. {p.describe()}" for i, p in enumerate(self.pending)) + "\n\n"
         self.messages.append({"role": "user", "text":
-                              f"{render_snapshot(self.world, self.active_house)}\n\n{notes}{pend}"
+                              f"{render_snapshot(self.world, self.active_house, self.operator)}\n\n{notes}{pend}"
                               f"RESIDENT: {text}"})
 
         actions: list[dict] = []
@@ -125,7 +126,7 @@ class ChatSession:
                     break
                 results = []
                 for tc in comp.tool_calls:
-                    out = self.ops._run_tool(tc.name, tc.input, self.active_house)
+                    out = self.ops._run_tool(tc.name, tc.input, self.active_house, operator=self.operator)
                     # Part 15: a standing delegation may cover this proposal. The dance happens
                     # engine-side under the grantor's identity; the model only sees the outcome.
                     if (tc.name == "propose_command" and self.delegations is not None
@@ -217,10 +218,16 @@ class ChatSession:
         return {"status": "denied", "message": f"denied: {p.describe()}"}
 
     def switch_house(self, house_id: str) -> None:
-        if house_id not in self.world.houses:
-            raise KeyError(house_id)
+        self._validate_active_house(house_id)
         self.active_house = house_id
         self.operator.active_house = house_id
+
+    def _validate_active_house(self, house_id: str) -> None:
+        if house_id not in self.world.houses:
+            raise KeyError(house_id)
+        scope = self.operator.houses
+        if scope != "*" and house_id not in scope:
+            raise PermissionError(f"property {house_id} is out of scope for operator {self.operator.name}")
 
     # ---- history hygiene ---------------------------------------------------------
     def _trim_history(self) -> None:

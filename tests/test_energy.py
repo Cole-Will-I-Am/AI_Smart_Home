@@ -55,6 +55,15 @@ def test_never_worse_flat_prices_fall_back_to_baseline():
     assert plan.cost <= plan.baseline_cost
 
 
+def test_never_worse_does_not_report_savings_from_depleting_battery_soc():
+    inputs = DayInputs(import_price=[1.00] + [0.10] * (HOURS - 1),
+                       solar_kw=[0.0] * HOURS, load_kw=[1.0] * HOURS)
+    plan = plan_day(inputs, Battery(capacity_kwh=5.0, max_charge_kw=0.0,
+                                    max_discharge_kw=5.0, soc_kwh=5.0))
+    assert plan.savings == 0.0
+    assert plan.cost == plan.baseline_cost
+
+
 def test_plan_intents_face_the_L3_gate(bare):
     """The planner proposes; the engine disposes. Battery set_mode is L3
     hardware-gated but reversible (not CONFIRM_REQUIRED): an AI operator proposing a

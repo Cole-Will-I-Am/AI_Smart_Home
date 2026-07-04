@@ -60,9 +60,12 @@ question; end with a one-line summary of what happened and what (if anything) aw
 confirmation."""
 
 
-def render_snapshot(world, active_house: str) -> str:
+def render_snapshot(world, active_house: str, operator=None) -> str:
     lines = [f"ACTIVE HOUSE: {active_house}", ""]
+    scope = getattr(operator, "houses", "*")
     for hid, house in world.houses.items():
+        if scope != "*" and hid not in scope:
+            continue
         lines.append(f"[{hid}] alias={house.alias} mode={house.mode} wan_up={house.wan_up} "
                      f"grid_up={house.grid_up} ai_hold={house.ai_hold}")
         # Show safety-relevant subsystems in FULL (no truncation — hiding state from the AI is a

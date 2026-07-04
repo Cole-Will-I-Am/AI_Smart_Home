@@ -133,6 +133,8 @@ def start_event_bridge(world: World, daemon: bool = True):
     """Launch the HA WebSocket->EventBus bridge in a background thread (real deployments)."""
     import threading
     t = threading.Thread(target=world.ha_adapter.run_event_bridge,  # type: ignore[attr-defined]
-                         args=(world.bus, world.event_map), daemon=daemon)  # type: ignore[attr-defined]
+                         args=(world.bus, world.event_map),  # type: ignore[attr-defined]
+                         kwargs={"state": world.state, "health": world.health},
+                         daemon=daemon)
     t.start()
     return t

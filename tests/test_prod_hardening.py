@@ -89,6 +89,7 @@ def test_emergency_bypasses_rate_but_not_cooldown(bare):
 
     g = Intent("house_a", "generator", "main", "start", emergency=True)
     assert eng.allow_cooldown(g) is True
+    eng.commit_cooldown(g)
     assert eng.allow_cooldown(g) is False              # cooldown STILL applies to emergencies (narrow scope)
 
 

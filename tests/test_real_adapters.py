@@ -2,6 +2,7 @@
 fake WebSocket connection — no network, no live services, no extra dependencies."""
 import json
 
+from homeops import build_world
 from homeops.permissions import Intent
 from homeops.events import EventBus
 from homeops.adapters import HomeAssistantAdapter, OPNsenseAdapter, CompositeAdapter
@@ -201,3 +202,25 @@ def test_ha_event_bridge_translates_state_changed():
     assert leaks and leaks[0].house_id == "house_a" and leaks[0].data["flow"] == 45
     assert any("access_token" in s for s in ws.sent)         # authenticated
     assert any("subscribe_events" in s for s in ws.sent)     # subscribed
+
+
+def test_ha_event_bridge_updates_state_and_health_for_mapped_entity():
+    msgs = [
+        json.dumps({"type": "auth_required"}),
+        json.dumps({"type": "auth_ok"}),
+        json.dumps({"id": 1, "type": "result", "success": True}),
+        json.dumps({"type": "event", "event": {"event_type": "state_changed", "data": {
+            "entity_id": "lock.front_a", "new_state": {"state": "unlocked"}}}}),
+    ]
+    ws = FakeWS(msgs)
+    bus = EventBus()
+    ha = HomeAssistantAdapter("http://ha:8123", "TOK", transport=FakeTransport(),
+                              entity_map={"house_a.lock.front_door": "lock.front_a"})
+    world = build_world(register_automations=False, adapter=ha)
+    event_map = {"lock.front_a": {"type": "state", "when": "unlocked", "house_id": "house_a"}}
+
+    ha.run_event_bridge(bus, event_map, connect=lambda: ws, state=world.state, health=world.health)
+
+    assert world.state.get_state("house_a.lock.front_door") == "unlocked"
+    assert world.health.healthy("house_a.lock.front_door", world.engine.tick)
+    assert [e.type for e in bus.history] == ["state"]

@@ -33,10 +33,16 @@ def register(world) -> None:
         if ev.type == "leak":
             sensor_wet = bool(ev.entity_id) and world.state.get_state(ev.entity_id) == "wet"
             flow = world.state.get_state(f"{h}.sensor.flow_meter")
-            flow_abnormal = flow is not None and float(flow) >= ABNORMAL_FLOW
+            flow_bad = False
+            try:
+                flow_abnormal = flow is not None and float(flow) >= ABNORMAL_FLOW
+            except (TypeError, ValueError):
+                flow_bad = True
+                flow_abnormal = True
             if sensor_wet and flow_abnormal:
                 do(h, "water", "main_valve", "shutoff_main", emergency=True)
-                world.notify(h, "Leak confirmed (wet sensor + abnormal flow): main water shutting off", urgent=True)
+                reason = "wet sensor + unreadable flow" if flow_bad else "wet sensor + abnormal flow"
+                world.notify(h, f"Leak confirmed ({reason}): main water shutting off", urgent=True)
 
         # 2. Unknown device joins the network -> quarantine
         elif ev.type == "network_join":
