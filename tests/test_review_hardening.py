@@ -6,7 +6,6 @@ Each test fails against the pre-patch code and passes after. Findings map:
   M1 provider error can't poison the transcript · M3 event history is bounded ·
   M4 incremental audit verification agrees with the whole-chain check.
 """
-import os
 import tempfile
 
 import pytest

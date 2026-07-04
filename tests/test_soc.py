@@ -15,7 +15,8 @@ def test_clean_house_is_armed(world):
 
 
 def test_leak_breaks_readiness_with_named_cause(world):
-    scenarios.leak(world, "house_a"); world.tick(3)
+    scenarios.leak(world, "house_a")
+    world.tick(3)
     rep = soc.readiness(world, "house_a")
     assert not rep.armed and rep.score < 1.0
     broken = {i.key for i in rep.items if not i.ready}
@@ -54,7 +55,8 @@ def test_drifting_catches_devices_before_they_go_stale(world):
 # ---- correlation -------------------------------------------------------------------
 def test_correlate_clusters_an_incident_not_singletons(world):
     # one multi-action incident (intrusion: light + camera) ...
-    scenarios.intrusion(world, "house_a"); world.tick(2)
+    scenarios.intrusion(world, "house_a")
+    world.tick(2)
     incidents = soc.correlate(world, "house_a")
     assert incidents
     biggest = max(incidents, key=lambda i: len(i.records))
@@ -68,9 +70,11 @@ def test_correlate_flags_refusals(world):
 
 
 def test_correlate_separates_distant_events(world):
-    scenarios.leak(world, "house_a"); world.tick(1)
+    scenarios.leak(world, "house_a")
+    world.tick(1)
     world.engine.tick += 10                                      # a gap wider than the window
-    scenarios.intrusion(world, "house_a"); world.tick(1)
+    scenarios.intrusion(world, "house_a")
+    world.tick(1)
     incidents = soc.correlate(world, "house_a", window=2)
     assert len(incidents) >= 2                                   # not merged into one
 
@@ -78,7 +82,8 @@ def test_correlate_separates_distant_events(world):
 # ---- overnight diff ----------------------------------------------------------------
 def test_overnight_diff_flags_safety_changes(world):
     before = soc.snapshot(world, "house_a")
-    scenarios.leak(world, "house_a"); world.tick(3)
+    scenarios.leak(world, "house_a")
+    world.tick(3)
     deltas = soc.overnight_diff(before, soc.snapshot(world, "house_a"), world, "house_a")
     valve = next(d for d in deltas if d.entity_id.endswith("water.main_valve"))
     assert valve.safety_relevant and valve.before != valve.after
@@ -105,7 +110,8 @@ def test_soc_never_actuates(world):
 
 def test_situation_report_composites_everything(world):
     before = soc.snapshot(world, "house_a")
-    scenarios.leak(world, "house_a"); world.tick(3)
+    scenarios.leak(world, "house_a")
+    world.tick(3)
     rep = soc.situation_report(world, "house_a", prior_snapshot=before)
     assert rep["armed"] is False
     assert rep["audit_intact"] is True

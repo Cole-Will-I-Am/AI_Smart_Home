@@ -5,7 +5,8 @@
     python scripts/run_scenario.py leak
 """
 from __future__ import annotations
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from homeops import build_world

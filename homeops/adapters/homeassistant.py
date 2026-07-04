@@ -15,15 +15,15 @@ import re
 import ssl
 from typing import Any, Callable
 
-# H3: a well-formed HA entity_id is `<domain>.<object_id>`; both halves are lowercase
-# alphanumeric + underscore. Anything else (slashes, '..', spaces, uppercase, control chars)
-# is refused before it can reach a request path.
-_SAFE_ENTITY_ID = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
-
 from .base import Adapter
 from .http import HttpClient, Transport
 from ..permissions import Intent
 from ..events import Event, EventBus
+
+# H3: a well-formed HA entity_id is `<domain>.<object_id>`; both halves are lowercase
+# alphanumeric + underscore. Anything else (slashes, '..', spaces, uppercase, control chars)
+# is refused before it can reach a request path.
+_SAFE_ENTITY_ID = re.compile(r"^[a-z_][a-z0-9_]*\.[a-z0-9_]+$")
 
 # Reversible HA domains: prior state maps cleanly to an inverse service.
 _REVERSIBLE = {"light", "switch", "lock", "cover", "valve", "alarm_control_panel"}

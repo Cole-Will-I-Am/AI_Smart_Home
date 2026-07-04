@@ -45,14 +45,17 @@ def run_acceptance_drills(world) -> list[Drill]:
         drills.append(Drill(name, entity, expected, str(observed), observed == expected))
 
     # each drill acts on house_a in the reference world; a real deployment iterates its houses
-    scenarios.leak(world, "house_a"); world.tick(2)
+    scenarios.leak(world, "house_a")
+    world.tick(2)
     check("water-leak → main valve closes", "house_a.water.main_valve", "closed")
 
-    scenarios.fire_co(world, "house_a"); world.tick(2)
+    scenarios.fire_co(world, "house_a")
+    world.tick(2)
     check("fire/CO → designated egress unlocks", "house_a.lock.egress_side", "unlocked")
     check("fire/CO → HVAC stops (no smoke spread)", "house_a.hvac.main", "off")
 
-    scenarios.intrusion(world, "house_a"); world.tick(2)
+    scenarios.intrusion(world, "house_a")
+    world.tick(2)
     check("intrusion → perimeter lighting on", "house_a.light.exterior_front", "on")
     check("intrusion → front camera records", "house_a.camera.front_door", "event")
 

@@ -19,7 +19,8 @@ def test_dashboard_renders_all_properties_and_audit_ok():
 def test_dashboard_surfaces_leak_and_offline():
     w = build_world(CFG)
     ids = list(w.houses)
-    scenarios.leak(w, ids[0]); w.tick(2)
+    scenarios.leak(w, ids[0])
+    w.tick(2)
     w.health.mark_offline(f"{ids[1]}.lock.front_door")
     html = render_dashboard(w)
     assert "urgent" in html and "offline" in html

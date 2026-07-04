@@ -7,6 +7,7 @@ If any test here fails, that is a safety incident, not a flake.
 import pytest
 
 from homeops.ai.session import ChatSession
+from homeops.delegations import Delegation, DelegationRegistry
 from homeops.permissions import Intent, Operator
 
 OWNER = lambda h="house_a", n="resident": Operator("owner", h, n)          # noqa: E731
@@ -151,7 +152,6 @@ def test_destructive_action_cannot_be_hammered(bare):
 
 
 # --- Review findings R-2/R-3: rollback authority + delegation grant authority ------------
-from homeops.delegations import Delegation, DelegationRegistry
 
 
 def _unlock_with_dance(bare):

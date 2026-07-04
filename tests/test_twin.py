@@ -26,7 +26,8 @@ def test_risk_rises_with_exposure_then_health(world):
     leak0 = next(d for d in t0.devices.values() if d.name == "leak_kitchen")
     base = leak0.risk
 
-    scenarios.leak(world, "house_a"); world.tick(1)             # sensor now 'wet' -> exposure 1.0
+    scenarios.leak(world, "house_a")
+    world.tick(1)  # sensor now 'wet' -> exposure 1.0
     t1 = EstateTwin(world)
     leak1 = next(d for d in t1.devices.values() if d.name == "leak_kitchen")
     assert leak1.risk > base                                    # exposure raised risk
@@ -38,7 +39,8 @@ def test_risk_rises_with_exposure_then_health(world):
 
 
 def test_room_and_house_risk_track_worst_device(world):
-    scenarios.leak(world, "house_a"); world.tick(1)
+    scenarios.leak(world, "house_a")
+    world.tick(1)
     t = EstateTwin(world)
     kitchen = next(r for r in t.rooms("house_a") if r.name == "kitchen")
     assert kitchen.risk_profile in ("elevated", "critical")
@@ -46,7 +48,8 @@ def test_room_and_house_risk_track_worst_device(world):
 
 
 def test_top_risks_are_sorted_and_bounded(world):
-    scenarios.leak(world, "house_a"); world.tick(1)
+    scenarios.leak(world, "house_a")
+    world.tick(1)
     t = EstateTwin(world)
     top = t.top_risks("house_a", 5)
     assert top == sorted(top, key=lambda d: d.risk, reverse=True)
@@ -72,7 +75,9 @@ def test_twin_is_readonly_and_rebuildable(world):
     n_audit = len(world.audit.records)
     t1 = EstateTwin(world)
     _ = t1.to_dict("house_a")
-    t1.top_risks("house_a"); t1.rooms_by_risk("house_a"); t1.would_authorize("lock", "unlock")
+    t1.top_risks("house_a")
+    t1.rooms_by_risk("house_a")
+    t1.would_authorize("lock", "unlock")
     assert soc.snapshot(world, "house_a") == before            # observing didn't mutate the world
     assert len(world.audit.records) == n_audit
     # rebuildable: a fresh twin from the same world is equivalent
@@ -82,7 +87,8 @@ def test_twin_is_readonly_and_rebuildable(world):
 
 def test_to_dict_is_serializable_and_ordered(world):
     import json
-    scenarios.leak(world, "house_a"); world.tick(1)
+    scenarios.leak(world, "house_a")
+    world.tick(1)
     d = EstateTwin(world).to_dict("house_a")
     json.dumps(d)                                              # must not raise
     rooms = d["rooms"]

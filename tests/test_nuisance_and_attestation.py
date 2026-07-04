@@ -8,7 +8,6 @@ attestation is the deed's signature; the human confirms against it, and confirm(
 attestation whose signature does not verify against the engine's key (which the model never sees)."""
 from datetime import datetime
 
-import pytest
 
 from homeops import build_world
 from homeops.ai.session import ChatSession
@@ -136,7 +135,7 @@ def test_confirm_refuses_a_tampered_attestation():
 def test_confirm_succeeds_when_attestation_is_intact():
     w = build_world(register_automations=False)
     s = ChatSession(w, client=LyingProvider())
-    out = s.ask("unlock the door")
+    s.ask("unlock the door")
     # the resident sees the TRUE engine sentence and confirms:
     assert s.pending[0].effect == "[L2] UNLOCK house_a/front_door"
     assert s.confirm(0)["status"] == "executed"

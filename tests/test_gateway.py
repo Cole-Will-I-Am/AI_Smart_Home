@@ -7,7 +7,6 @@ import pytest
 
 from homeops import build_world
 from homeops.gateway import Gateway
-from homeops.permissions import Attestation
 
 
 @pytest.fixture

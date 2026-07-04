@@ -126,8 +126,10 @@ class Gateway:
         if device is None:
             return {"status": "unauthorized", "message": "unknown or missing device token"}
         try:
-            house_id = str(body["house_id"]); subsystem = str(body["subsystem"])
-            target = str(body["target"]); action = str(body["action"])
+            house_id = str(body["house_id"])
+            subsystem = str(body["subsystem"])
+            target = str(body["target"])
+            action = str(body["action"])
         except (KeyError, TypeError):
             return {"status": "bad_request",
                     "message": "house_id, subsystem, target, action are required"}

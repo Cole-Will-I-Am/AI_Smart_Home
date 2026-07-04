@@ -4,8 +4,7 @@ import json
 
 import pytest
 
-from homeops.ai.providers import (AnthropicProvider, OpenAIProvider, Provider, ToolCall,
-                                  as_provider)
+from homeops.ai.providers import (AnthropicProvider, OpenAIProvider, as_provider)
 from homeops.ai.session import ChatSession
 from homeops.ai.tools import TOOLS
 

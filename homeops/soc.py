@@ -184,7 +184,9 @@ def correlate(world, house_id: str | None = None, window: int = 2,
     cur: Incident | None = None
     for r in recs:
         if cur is not None and r.house_id == cur.house_id and r.tick - cur.end_tick <= window:
-            cur.records.append(r); cur.end_tick = r.tick; cur.subsystems.add(r.subsystem)
+            cur.records.append(r)
+            cur.end_tick = r.tick
+            cur.subsystems.add(r.subsystem)
         else:
             if cur is not None:
                 incidents.append(cur)

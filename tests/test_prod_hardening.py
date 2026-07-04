@@ -9,7 +9,6 @@ import threading
 import urllib.request
 import urllib.error
 
-import pytest
 
 from homeops import build_world
 from homeops.gateway import Gateway

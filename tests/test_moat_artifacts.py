@@ -3,7 +3,6 @@ tamper-evident commissioning certificate. These are the deliverables competitors
 fake, because their provenance is the test suite and a site secret."""
 import json
 
-import pytest
 
 from homeops.deployment import DeploymentConfig
 from homeops.certificate import (all_drills_passed, issue_certificate, render_certificate,

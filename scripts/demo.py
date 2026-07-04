@@ -6,7 +6,8 @@ confirmation guard, a two-signal leak auto-shutoff, a WAN-down local-first proof
 layer proposing an L4 action that the engine refuses.
 """
 from __future__ import annotations
-import sys, os
+import sys
+import os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from homeops import build_world
@@ -36,7 +37,8 @@ def main():
     line(f"turn on house_b kitchen light (no confirm) -> {r.status}: {r.message}")
 
     print("\n# 4. Two-signal leak: main water auto-shuts off (local, no AI)")
-    scenarios.leak(w, "house_a"); w.tick(2)
+    scenarios.leak(w, "house_a")
+    w.tick(2)
     line(f"house_a main_valve -> {w.state.get_state('house_a.water.main_valve')}")
 
     print("\n# 5. Local-first: drop WAN, trigger a fire — locals still respond")
@@ -46,7 +48,7 @@ def main():
          f"(WAN down, handled locally)")
 
     print("\n# 6. AI ops layer proposes an L4 action — engine refuses (no execution path)")
-    ai = OpsLayer(w, client=None)   # client None -> fallback; L4 shown directly via router:
+    OpsLayer(w, client=None)        # client None -> fallback; L4 shown directly via router:
     r = w.router.execute(Intent("house_a", "lock", "front_door", "unlock_unknown"),
                          Operator("ai", "house_a", "ai-ops"))
     line(f"ai proposes unlock_unknown -> {r.status}: {r.message}")
