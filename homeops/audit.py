@@ -11,7 +11,7 @@ substitute for WORM storage or an external notary in production, but it makes ta
 rather than silent.
 """
 from __future__ import annotations
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 import hashlib
 import json
 import os
@@ -50,6 +50,8 @@ class AuditLog:
         self._rollback: dict[str, dict[str, Any]] = {}
         self._path = path
         self._head = GENESIS
+        self._verified_upto = 0    # M4: index one past the last record confirmed by verify_incremental
+        self._torn_tail: str | None = None   # H5: a dropped, crash-truncated final line, if any
         if path and os.path.exists(path):
             self._load()
 
@@ -70,20 +72,55 @@ class AuditLog:
         for i, rec in enumerate(self._records):
             h = _hash(head, rec)
             if i >= len(self._meta) or h != self._meta[i]["hash"] or self._meta[i]["prev"] != head:
+                self._verified_upto = i
                 return False, i
             head = h
-        return (head == self._head), (-1 if head == self._head else len(self._records) - 1)
+        ok = head == self._head
+        self._verified_upto = len(self._records) if ok else len(self._records) - 1
+        return ok, (-1 if ok else len(self._records) - 1)
+
+    def verify_incremental(self) -> bool:
+        """M4: re-verify only the records appended since the last check — O(new records), not
+        O(whole chain). A running service calls this every housekeeping cycle; the prefix was
+        already confirmed on load or on a prior cycle, and records are append-only, so re-hashing
+        the whole history each tick is wasted work that grows without bound. Any anomaly resets
+        the cursor and falls back to the authoritative whole-chain check (fail-safe, not fail-open)."""
+        n = len(self._records)
+        start = self._verified_upto
+        if start > n:                       # records vanished from memory — trust nothing
+            self._verified_upto = 0
+            return self.verify_chain()[0]
+        head = self._meta[start - 1]["hash"] if start > 0 else GENESIS
+        for i in range(start, n):
+            rec = self._records[i]
+            h = _hash(head, rec)
+            if h != self._meta[i]["hash"] or self._meta[i]["prev"] != head:
+                self._verified_upto = 0     # something moved beneath us — force a full recheck
+                return self.verify_chain()[0]
+            head = h
+        self._verified_upto = n
+        return head == self._head
 
     def _load(self) -> None:
-        with open(self._path) as f:
-            for line in f:
-                line = line.strip()
-                if not line:
-                    continue
+        # H5: a process killed mid-write leaves a truncated final line. That is the exact crash
+        # this log claims to survive, so a torn *tail* is dropped (the surviving prefix still
+        # hash-verifies) rather than aborting startup. A malformed line anywhere *before* the end
+        # is genuine corruption and still raises — we tolerate the interrupted write, not tampering.
+        raw_lines = [ln.strip() for ln in open(self._path) if ln.strip()]
+        for idx, line in enumerate(raw_lines):
+            try:
                 entry = json.loads(line)
-                self._records.append(AuditRecord(**entry["record"]))
-                self._meta.append({"seq": entry["seq"], "prev": entry["prev"], "hash": entry["hash"]})
-                self._head = entry["hash"]
+                rec = AuditRecord(**entry["record"])
+            except (ValueError, TypeError, KeyError) as e:
+                if idx == len(raw_lines) - 1:
+                    self._torn_tail = line     # dropped, recorded for diagnostics
+                    break
+                raise ValueError(
+                    f"audit log at {self._path} has a malformed record at line {idx} "
+                    f"(not the final line — this is corruption, not a torn write): {e}")
+            self._records.append(rec)
+            self._meta.append({"seq": entry["seq"], "prev": entry["prev"], "hash": entry["hash"]})
+            self._head = entry["hash"]
         ok, bad = self.verify_chain()
         if not ok:
             raise ValueError(f"audit log at {self._path} failed integrity check at record {bad}")
