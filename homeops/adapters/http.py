@@ -29,6 +29,11 @@ def urllib_transport(verify_tls: bool = True, timeout: float = 10.0) -> Transpor
                 return resp.status, resp.read().decode()
         except urllib.error.HTTPError as e:
             return e.code, e.read().decode()
+        except (urllib.error.URLError, TimeoutError, OSError) as e:
+            # R3: a connect/read timeout or transport failure has no HTTP status. Surface it as a
+            # synthetic 504 so callers see a clean non-2xx failure instead of a raised exception;
+            # the router additionally guards apply(), so device state is recorded unknown, not lost.
+            return 504, json.dumps({"error": f"transport: {type(e).__name__}: {e}"})
     return _t
 
 

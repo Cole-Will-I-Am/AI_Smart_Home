@@ -148,7 +148,20 @@ class CommandRouter:
         if consume_token_at_actuation:
             eng.consume_token(intent)
 
-        res = self.adapter.apply(intent)
+        # R3: the adapter reaches the physical world over the network. A timeout or transport
+        # fault must never escape uncaught — that would leave NO audit record and the device in an
+        # unknown state (the command may have landed). Catch any adapter fault, record it truthfully
+        # as `error`, and flag the device unhealthy so the next safety-critical action is health-
+        # gated. The confirm token was already spent at actuation (H4); a fault leaves it spent —
+        # the safe default: the human re-confirms rather than a stale token lingering.
+        try:
+            res = self.adapter.apply(intent)
+        except Exception as e:   # noqa: BLE001 — intentionally broad; truthful audit over propagation
+            if self.health is not None:
+                self.health.mark_offline(intent.entity_id)
+            return self._audit(intent, operator, "error",
+                               f"adapter fault for {intent.subsystem}.{intent.action} "
+                               f"({intent.entity_id}) - state UNKNOWN: {type(e).__name__}: {e}", level)
         if not res.get("ok"):
             return self._audit(intent, operator, "refused", res.get("message", "device error"), level)
 
