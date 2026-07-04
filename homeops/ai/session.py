@@ -25,7 +25,7 @@ path is unchanged (its pendings carry no structured intent to match against).
 from __future__ import annotations
 from dataclasses import dataclass, field
 
-from ..delegations import DelegationRegistry, try_delegated_execute
+from ..delegations import DelegationRegistry
 from ..permissions import Intent, Operator
 from .fallback import deterministic_response
 from .ops_layer import OpsLayer
@@ -74,6 +74,8 @@ class ChatSession:
         self.messages: list[dict] = []
         self._turn_starts: list[int] = []      # message index where each ask() began (for whole-turn trimming)
         self.pending: list[PendingConfirmation] = []
+        self.ops.delegations = self.delegations
+        self.ops.pending_provider = lambda: self.pending
         self._notes: list[str] = []            # human-side outcomes to surface to the model next turn
 
     @property
@@ -127,20 +129,8 @@ class ChatSession:
                 results = []
                 for tc in comp.tool_calls:
                     out = self.ops._run_tool(tc.name, tc.input, self.active_house, operator=self.operator)
-                    # Part 15: a standing delegation may cover this proposal. The dance happens
-                    # engine-side under the grantor's identity; the model only sees the outcome.
-                    if (tc.name == "propose_command" and self.delegations is not None
-                            and out.get("status") == "confirm_required"):
-                        src = tc.input
-                        intent = Intent(house_id=src.get("house_id", self.active_house),
-                                        subsystem=src["subsystem"], target=src["target"],
-                                        action=src["action"], args=dict(src.get("args") or {}))
-                        d_res, d = try_delegated_execute(self.world, intent, self.delegations)
-                        if d_res is not None:
-                            out = {"status": d_res.status, "level": d_res.level, "delegation": d.id,
-                                   "message": f"executed under standing delegation {d.id}: {d_res.message}"}
                     out.pop("confirm_token", None)   # belt-and-braces: the engine already issues none to "ai"
-                    if tc.name in ("propose_command", "recommend"):
+                    if tc.name in ("propose_command", "propose_plan", "recommend"):
                         entry = {"tool": tc.name, **out}
                         if tc.name == "propose_command":
                             entry["intent"] = dict(tc.input)
@@ -165,18 +155,29 @@ class ChatSession:
 
     # ---- pending-confirmation bookkeeping ---------------------------------------
     def _register_pending(self, actions: list[dict]) -> None:
+        def add(src: dict, level=None, message="", attestation=None) -> None:
+            if not src:
+                return
+            p = PendingConfirmation(
+                house_id=src.get("house_id", self.active_house), subsystem=src["subsystem"],
+                target=src["target"], action=src["action"], args=dict(src.get("args") or {}),
+                level=level, message=message, attestation=attestation)
+            if not any(q.describe() == p.describe() for q in self.pending):
+                self.pending.append(p)
+
         for a in actions:
+            if a.get("tool") == "propose_plan":
+                for step in a.get("steps", []):
+                    if step.get("status") == "confirm_required":
+                        add(step.get("intent") or {}, step.get("level"), step.get("message", ""),
+                            step.get("attestation"))
+                continue
             if a.get("status") != "confirm_required":
                 continue
             src = a.get("intent") or {}
             if not src:            # fallback path records cmd strings, not intents — skip those
                 continue
-            p = PendingConfirmation(
-                house_id=src.get("house_id", self.active_house), subsystem=src["subsystem"],
-                target=src["target"], action=src["action"], args=dict(src.get("args") or {}),
-                level=a.get("level"), message=a.get("message", ""), attestation=a.get("attestation"))
-            if not any(q.describe() == p.describe() for q in self.pending):
-                self.pending.append(p)
+            add(src, a.get("level"), a.get("message", ""), a.get("attestation"))
 
     def confirm(self, index: int = 0) -> dict:
         """Execute a pending action AS THE RESIDENT: same intent, human identity, two-step token."""

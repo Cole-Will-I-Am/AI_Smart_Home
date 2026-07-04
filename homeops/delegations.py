@@ -10,9 +10,12 @@ never to the model:
   * the token is minted and consumed inside `try_delegated_execute` under an owner-kind
     operator named for the certificate — it never enters the model's context
     (regression-tested in tests/test_delegations.py),
-  * only L1/L2 actions are delegable: L3 (breakers, generator, mains) stays per-act,
-    L4/L5 remain execution-path-free — enforced at grant time AND re-checked at match
-    time, fail-closed, in case ACTION_LEVELS ever changes,
+  * only explicitly delegable L1/L2/L3 actions are covered. Reversible L3 power/infra
+    actions (battery modes, EV limits, load-shed, breaker-on, climate mode) may be covered,
+    but life-safety-adjacent or one-shot destructive actions remain per-act: anything in
+    SAFETY_CRITICAL or DESTRUCTIVE_COOLDOWN is non-delegable. L4/L5 remain execution-path-free.
+    This rule is enforced at grant time AND re-checked at match time, fail-closed, in case
+    ACTION_LEVELS ever changes,
   * semantic invariants (Part 14) outrank standing consent: a delegation can never
     standing-approve an out-of-envelope value,
   * every delegated execution writes a paired, hash-chained `delegated` advisory record
@@ -25,11 +28,36 @@ import json
 import os
 from dataclasses import dataclass, field
 from datetime import date, datetime
+from uuid import uuid4
 
 from .audit import AuditRecord
-from .permissions import ACTION_LEVELS, Intent, Operator, semantic_violation
+from .permissions import (
+    ACTION_LEVELS, DESTRUCTIVE_COOLDOWN, SAFETY_CRITICAL, Intent, Operator, semantic_violation,
+)
 
-DELEGABLE_MAX_LEVEL = 2
+DELEGABLE_MAX_LEVEL = 3
+
+
+def delegation_block_reason(subsystem: str, action: str) -> str | None:
+    """Return why an action is not eligible for standing consent, or None if it is.
+
+    Delegation is intentionally narrower than execution: the router may execute L3 after a
+    human confirmation, but standing authority covers only reversible/non-life-safety actions.
+    """
+    lvl = ACTION_LEVELS.get((subsystem, action))
+    if lvl is None:
+        return f"cannot delegate unknown action {subsystem}.{action}"
+    if lvl > DELEGABLE_MAX_LEVEL:
+        return f"L{lvl} is not delegable — standing consent stops at L{DELEGABLE_MAX_LEVEL}"
+    if (subsystem, action) in SAFETY_CRITICAL:
+        return f"{subsystem}.{action} is safety-critical and remains per-act"
+    if (subsystem, action) in DESTRUCTIVE_COOLDOWN:
+        return f"{subsystem}.{action} is destructive/cooldown-gated and remains per-act"
+    return None
+
+
+def is_delegable_action(subsystem: str, action: str) -> bool:
+    return delegation_block_reason(subsystem, action) is None
 
 
 @dataclass
@@ -37,13 +65,14 @@ class Delegation:
     id: str
     grantor: str                        # the human principal who signed this standing consent
     house_id: str
-    subsystem: str
-    action: str
+    subsystem: str                       # exact subsystem, or "*" for standing authority
+    action: str                          # exact action, or "*" for standing authority
     window: tuple[int, int] | None = None       # (start_hour, end_hour) inclusive; wraps midnight if start > end
     args_within: dict | None = None             # declarative arg envelope: key -> (lo, hi)
     budget_per_day: int = 4
     expires: date | None = None
     revoked: bool = False
+    max_level: int | None = None                # only for wildcard standing-authority certs
     used_today: int = 0
     _day: date | None = field(default=None, repr=False)
 
@@ -57,7 +86,14 @@ class Delegation:
         lvl = ACTION_LEVELS.get((intent.subsystem, intent.action))
         if lvl is None or lvl > DELEGABLE_MAX_LEVEL:   # fail-closed, re-checked at match time
             return False
-        if (intent.house_id, intent.subsystem, intent.action) != (self.house_id, self.subsystem, self.action):
+        if not is_delegable_action(intent.subsystem, intent.action):
+            return False
+        if intent.house_id != self.house_id:
+            return False
+        if self.subsystem == "*" and self.action == "*":
+            if self.max_level is None or lvl > self.max_level:
+                return False
+        elif (intent.subsystem, intent.action) != (self.subsystem, self.action):
             return False
         if self.window is not None:
             s, e = self.window
@@ -84,6 +120,7 @@ class Delegation:
                 "budget_per_day": self.budget_per_day,
                 "expires": self.expires.isoformat() if self.expires else None,
                 "revoked": self.revoked,
+                "max_level": self.max_level,
                 "used_today": self.used_today,
                 "day": self._day.isoformat() if self._day else None}
 
@@ -96,6 +133,7 @@ class Delegation:
                    budget_per_day=d.get("budget_per_day", 4),
                    expires=date.fromisoformat(d["expires"]) if d.get("expires") else None,
                    revoked=bool(d.get("revoked", False)),
+                   max_level=d.get("max_level"),
                    used_today=int(d.get("used_today", 0)),
                    _day=date.fromisoformat(d["day"]) if d.get("day") else None)
 
@@ -135,17 +173,26 @@ class DelegationRegistry:
         GRANTOR's authority (review finding R-3): only an owner whose property scope covers
         the house and whose role cap admits the action may mint standing consent. Without
         this, whoever can call grant() mints owner-level authority."""
-        lvl = ACTION_LEVELS.get((d.subsystem, d.action))
-        if lvl is None:
-            raise ValueError(f"cannot delegate unknown action {d.subsystem}.{d.action}")
-        if lvl > DELEGABLE_MAX_LEVEL:
-            raise ValueError(
-                f"L{lvl} is not delegable — standing consent stops at L{DELEGABLE_MAX_LEVEL}")
         if by is None or getattr(by, "kind", None) != "owner":
             raise PermissionError(
                 f"only an owner may grant standing consent (grantor kind={getattr(by, 'kind', None)!r})")
         if by.houses != "*" and d.house_id not in by.houses:
             raise PermissionError(f"grantor {by.name or 'owner'!r} has no authority over {d.house_id}")
+        wildcard = d.subsystem == "*" and d.action == "*"
+        if wildcard:
+            lvl = d.max_level
+            if lvl is None:
+                raise ValueError("standing authority requires max_level")
+            if lvl > DELEGABLE_MAX_LEVEL:
+                raise ValueError(
+                    f"L{lvl} is not delegable — standing consent stops at L{DELEGABLE_MAX_LEVEL}")
+            if lvl < 0:
+                raise ValueError("standing authority max_level must be non-negative")
+        else:
+            lvl = ACTION_LEVELS.get((d.subsystem, d.action))
+            reason = delegation_block_reason(d.subsystem, d.action)
+            if reason is not None:
+                raise ValueError(reason)
         if by.max_level is not None and lvl > by.max_level:
             raise PermissionError(f"grantor role caps at L{by.max_level}; cannot delegate an L{lvl} action")
         self._delegations[d.id] = d
@@ -190,8 +237,13 @@ def try_delegated_execute(world, intent: Intent, registry: DelegationRegistry):
         return None, None      # Part 14 envelopes outrank standing consent
     eng = world.router.engine
     intent.confirm_token = eng.issue_token(intent, grantor_op)
-    res = world.router.execute(intent, grantor_op)
-    intent.confirm_token = None
+    try:
+        res = world.router.execute(intent, grantor_op)
+    finally:
+        # A delegated token is engine-internal. If a downstream gate refuses before the router
+        # consumes it, do not leave that token alive; fall back to the ordinary pending path.
+        eng.consume_token(intent)
+        intent.confirm_token = None
     if not res.ok:
         return None, None
     d.used_today += 1
@@ -207,3 +259,34 @@ def try_delegated_execute(world, intent: Intent, registry: DelegationRegistry):
         message=f"standing delegation {d.id} executed {intent.subsystem}.{intent.action} for {d.grantor}",
     ))
     return res, d
+
+
+def grant_standing_authority(grantor: Operator, house_id: str, max_level: int,
+                             window: tuple[int, int] | None = None, budget: int = 4,
+                             expiry: date | None = None,
+                             args_within: dict | None = None,
+                             registry: DelegationRegistry | None = None) -> Delegation:
+    """Human owner helper for broad standing authority over delegable actions up to max_level.
+
+    This is deliberately not an AI tool. The caller supplies the authenticated human owner
+    (`grantor`); `DelegationRegistry.grant()` still performs owner/scope/role-cap checks.
+    """
+    if grantor is None or getattr(grantor, "kind", None) != "owner":
+        raise PermissionError("only an owner may grant standing authority")
+    if max_level > DELEGABLE_MAX_LEVEL:
+        raise ValueError(f"standing authority max_level must be <= {DELEGABLE_MAX_LEVEL}")
+    reg = registry if registry is not None else DelegationRegistry()
+    name = grantor.name or "owner"
+    d = Delegation(
+        id=f"sa-{house_id}-L{max_level}-{uuid4().hex[:8]}",
+        grantor=name,
+        house_id=house_id,
+        subsystem="*",
+        action="*",
+        window=window,
+        args_within=args_within,
+        budget_per_day=budget,
+        expires=expiry,
+        max_level=max_level,
+    )
+    return reg.grant(d, grantor)

@@ -55,9 +55,11 @@ never promise the pixels. You serve the residents of this estate and report only
 nothing you observe leaves the property.
 
 ## Style
-Brief and concrete. Use read_state / list_recent_events before acting; at most one clarifying \
-question; end with a one-line summary of what happened and what (if anything) awaits \
-confirmation."""
+Brief and concrete. Use situation, explain_action, device_health, read_state, \
+list_pending_confirmations, and list_recent_events to understand the estate before acting. Use \
+propose_plan for conditional multi-step work; every step still faces the permission engine. Ask \
+at most one clarifying question; end with a one-line summary of what happened and what (if \
+anything) awaits confirmation."""
 
 
 def render_snapshot(world, active_house: str, operator=None) -> str:

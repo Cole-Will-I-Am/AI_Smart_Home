@@ -210,7 +210,7 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 | AI fallback escalates | the fallback runs as an AI-limited operator, never silently as `owner` |
 | Stray action maps to a dangerous service | adapter mappings are **fail-closed** (`unlock_unknown` can never become `lock.unlock`) |
 | Out-of-envelope argument (a 200 °F setpoint) | **semantic invariants** in the engine escalate to human confirmation — adapter-independent; the simulator's clamp is no longer the last line |
-| Standing consent abused | **delegation certificates** are L ≤ 2-capped, windowed, budgeted, revocable; envelopes outrank them; tokens still never enter model context; `grant()` checks the **grantor's** authority, not just the action's |
+| Standing consent abused | **delegation certificates** are bounded to explicit delegable actions (L1/L2 plus reversible L3 power/infra only), windowed, budgeted, revocable; safety-critical/destructive actions and L4/L5 remain non-delegable; envelopes outrank them; tokens still never enter model context; `grant()` checks the **grantor's** authority, not just the action's |
 | Model spams envelope-legal L1 actions all night | an **AI L1 nuisance budget** caps AI-originated L1 actuation per house per day; humans and emergency automations are exempt |
 | Model lies about what a pending action does, to farm a rubber-stamp | every `confirm_required` carries an **engine-signed attestation** (HMAC, key outside model context) rendering the true deed; `confirm()` refuses any signature mismatch — consent attaches to the deed, not its narration |
 | Houses collapse onto shared devices | `strict_entity_map` fails startup if any controllable entity lacks an explicit mapping; the validator also rejects duplicate targets |

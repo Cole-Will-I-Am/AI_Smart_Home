@@ -204,7 +204,7 @@ def test_confirm_required_inverse_is_not_rollbackable(bare):
 
 def test_delegation_grant_requires_an_owner():
     reg = DelegationRegistry()
-    d = Delegation(id="d", grantor="mallory", house_id="house_a", subsystem="lock", action="lock")
+    d = Delegation(id="d", grantor="mallory", house_id="house_a", subsystem="alarm", action="arm")
     for kind in ("ai", "guest", "system"):
         with pytest.raises(PermissionError):
             reg.grant(d, Operator(kind, "house_a", kind))
@@ -213,9 +213,9 @@ def test_delegation_grant_requires_an_owner():
 
 def test_delegation_grant_respects_scope_and_role_cap():
     reg = DelegationRegistry()
-    d = Delegation(id="d", grantor="colton", house_id="house_a", subsystem="lock", action="lock")
+    d = Delegation(id="d", grantor="colton", house_id="house_a", subsystem="battery", action="set_mode")
     with pytest.raises(PermissionError):
         reg.grant(d, Operator("owner", "house_b", "b-owner", houses={"house_b"}))
     with pytest.raises(PermissionError):
-        reg.grant(d, Operator("owner", "house_a", "limited", max_level=1))
+        reg.grant(d, Operator("owner", "house_a", "limited", max_level=2))
     assert reg.grant(d, Operator("owner", "house_a", "colton")) is d
