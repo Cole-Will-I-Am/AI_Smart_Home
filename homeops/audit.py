@@ -15,6 +15,7 @@ from dataclasses import dataclass, asdict
 import hashlib
 import json
 import os
+import threading
 from typing import Any
 
 GENESIS = "0" * 64
@@ -52,19 +53,23 @@ class AuditLog:
         self._head = GENESIS
         self._verified_upto = 0    # M4: index one past the last record confirmed by verify_incremental
         self._torn_tail: str | None = None   # H5: a dropped, crash-truncated final line, if any
+        self._lock = threading.RLock()       # R2: audit chain + rollback registry are shared state
         if path and os.path.exists(path):
             self._load()
 
     def record(self, rec: AuditRecord) -> None:
-        h = _hash(self._head, rec)
-        seq = len(self._records)
-        self._records.append(rec)
-        self._meta.append({"seq": seq, "prev": self._head, "hash": h})
-        self._head = h
-        if self._path:
-            with open(self._path, "a") as f:
-                f.write(json.dumps({"seq": seq, "prev": self._meta[-1]["prev"],
-                                    "hash": h, "record": asdict(rec)}) + "\n")
+        with self._lock:   # R2: append is a read-modify-write of the chain head; must be atomic
+            h = _hash(self._head, rec)
+            seq = len(self._records)
+            self._records.append(rec)
+            self._meta.append({"seq": seq, "prev": self._head, "hash": h})
+            self._head = h
+            if self._path:
+                with open(self._path, "a") as f:
+                    f.write(json.dumps({"seq": seq, "prev": self._meta[-1]["prev"],
+                                        "hash": h, "record": asdict(rec)}) + "\n")
+                    f.flush()
+                    os.fsync(f.fileno())   # R4: durable append — a crash cannot lose a recorded verdict
 
     def verify_chain(self) -> tuple[bool, int]:
         """Recompute the whole chain. Returns (ok, first_bad_index) — (True, -1) if intact."""
@@ -127,7 +132,8 @@ class AuditLog:
 
     # --- rollback registry ---------------------------------------------------
     def register_rollback(self, token: str, undo: dict[str, Any], meta: dict | None = None) -> None:
-        self._rollback[token] = {"undo": undo, "meta": dict(meta or {})}
+        with self._lock:
+            self._rollback[token] = {"undo": undo, "meta": dict(meta or {})}
 
     def rollback(self, token: str) -> dict[str, Any] | None:
         """Look up a rollback entry {'undo':..., 'meta':...} WITHOUT consuming it."""
@@ -135,7 +141,8 @@ class AuditLog:
 
     def consume_rollback(self, token: str) -> None:
         """Rollback tokens are single-use: consumed by the router before actuation."""
-        self._rollback.pop(token, None)
+        with self._lock:
+            self._rollback.pop(token, None)
 
     # --- reads ---------------------------------------------------------------
     @property

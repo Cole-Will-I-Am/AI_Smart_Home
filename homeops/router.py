@@ -11,6 +11,7 @@ confirm_required rather than executing silently. Time-dependent envelopes (quiet
 read `self.clock`, injectable for tests and deployments (defaults to wall clock).
 """
 from __future__ import annotations
+import threading
 from datetime import datetime
 
 from .permissions import (
@@ -31,6 +32,7 @@ class CommandRouter:
         self.audit = audit
         self.health = health   # optional HealthRegistry; gates safety-critical actuation
         self.clock = clock or datetime.now   # wall clock for time-dependent semantic invariants
+        self._lock = threading.RLock()       # R2: serializes execute() into one atomic pipeline
 
     def _audit(self, intent: Intent, operator: Operator, status: str, message: str,
                level: int | None, rollback: str | None = None, ctoken: str | None = None,
@@ -47,6 +49,15 @@ class CommandRouter:
                       rollback_token=rollback, attestation=att)
 
     def execute(self, intent: Intent, operator: Operator) -> Result:
+        # R2: serialize the entire command pipeline. The gates below (rate, cooldown, single-use
+        # token peek->consume, AI-L1 budget), the actuation, and the audit-chain append are ONE
+        # critical section; under the threaded gateway, interleaving them corrupts the hash chain
+        # and lets a single-use confirm token be double-consumed (TOCTOU). One reentrant lock makes
+        # each command atomic. A home's command rate makes the serialization cost negligible.
+        with self._lock:
+            return self._execute(intent, operator)
+
+    def _execute(self, intent: Intent, operator: Operator) -> Result:
         eng = self.engine
 
         # Fail-closed on unknown property identifiers BEFORE any level/confirm logic, so a
