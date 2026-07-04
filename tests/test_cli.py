@@ -17,7 +17,7 @@ def test_no_config_is_deterministic_fallback():
 def test_ollama_shorthand_expands_to_local_endpoint():
     ai = resolve_ai_config({"ollama": "qwen3:14b"}, environ={})
     assert ai == {"provider": "openai-compatible", "model": "qwen3:14b",
-                  "base_url": "http://127.0.0.1:11434/v1"}
+                  "base_url": "http://127.0.0.1:11434/v1", "timeout": 300.0}
 
 
 def test_explicit_base_url_implies_openai_compatible():
@@ -109,3 +109,32 @@ def test_terminal_turn_executes_l1_and_surfaces_attested_l2(monkeypatch):
     assert session.pending[0].effect == "[L2] UNLOCK house_a/front_door"
     assert session.confirm(0)["status"] == "executed"
     assert w.state.get_state("house_a.lock.front_door") == "unlocked"
+
+
+# --- terminal-plane regression: --timeout / HOMEOPS_AI_TIMEOUT reach the provider config ------
+
+def test_resolve_timeout_flag_env_and_loopback_default():
+    from homeops.cli import resolve_ai_config
+    # --ollama shorthand gets a generous local-inference default
+    ai = resolve_ai_config({"ollama": "m"}, environ={})
+    assert ai["timeout"] == 300.0
+    # explicit flag wins over env
+    ai = resolve_ai_config({"ollama": "m", "timeout": "45"}, environ={"HOMEOPS_AI_TIMEOUT": "9"})
+    assert ai["timeout"] == 45.0
+    # env reaches the explicit base-url path too
+    ai = resolve_ai_config({"base_url": "http://127.0.0.1:11434/v1", "model": "m"},
+                           environ={"HOMEOPS_AI_TIMEOUT": "120"})
+    assert ai["timeout"] == 120.0
+
+
+def test_parse_chat_args_accepts_timeout():
+    from homeops.cli import _parse_chat_args
+    house, args = _parse_chat_args(["house_b", "--ollama", "m", "--timeout", "90"])
+    assert house == "house_b" and args["timeout"] == "90" and args["ollama"] == "m"
+
+
+def test_validate_missing_file_fails_clean(capsys):
+    from homeops.cli import main
+    rc = main(["validate", "does/not/exist.yaml"])
+    out = capsys.readouterr().out
+    assert rc == 1 and "not found" in out and "example" in out

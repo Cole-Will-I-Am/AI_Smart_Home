@@ -235,11 +235,23 @@ def provider_from_config(ai: dict | None, secrets: dict | None = None):
                                      verify_tls=bool(ai.get("verify_tls", True)))
         return p, model
     if name == "anthropic":
-        import anthropic   # optional SDK; lazy so the stdlib-only core never needs it
+        try:
+            import anthropic   # optional SDK; lazy so the stdlib-only core never needs it
+        except ImportError as e:
+            raise ValueError(
+                "the anthropic SDK is not installed — `pip install \"homeops[anthropic]\"` "
+                "(or point at any OpenAI-compatible endpoint with --base-url/--ollama, "
+                "which needs no SDK)") from e
         return AnthropicProvider(anthropic.Anthropic(api_key=key("ANTHROPIC_API_KEY"))), \
             (model or AnthropicProvider.default_model)
     if name == "openai":
-        import openai      # optional SDK; lazy
+        try:
+            import openai      # optional SDK; lazy
+        except ImportError as e:
+            raise ValueError(
+                "the openai SDK is not installed — `pip install \"homeops[openai]\"` "
+                "(or point at any OpenAI-compatible endpoint with --base-url/--ollama, "
+                "which needs no SDK)") from e
         return OpenAIProvider(openai.OpenAI(api_key=key("OPENAI_API_KEY"))), \
             (model or OpenAIProvider.default_model)
     raise ValueError(f"unknown ai.provider {ai['provider']!r} "

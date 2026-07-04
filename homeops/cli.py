@@ -2,7 +2,7 @@
 
     python -m homeops.cli status
     python -m homeops.cli command house_a light living_room turn_on
-    homeops chat [house_a] [--model M] [--provider P] [--base-url URL] [--ollama M]
+    homeops chat [house_a] [--model M] [--provider P] [--base-url URL] [--ollama M] [--timeout S]
                                                              # resident chat through ANY model you choose
     python -m homeops.cli ask [house_a]                       # alias for chat
     python -m homeops.cli soc [house_a]                      # Home-SOC situation report (readiness/incidents/drift)
@@ -31,13 +31,17 @@ def resolve_ai_config(args: dict, environ: dict | None = None, dep_ai: dict | No
     # 2a. explicit flags win
     if args.get("ollama") is not None:
         return {"provider": "openai-compatible", "model": args["ollama"],
-                "base_url": args.get("base_url") or "http://127.0.0.1:11434/v1"}
+                "base_url": args.get("base_url") or "http://127.0.0.1:11434/v1",
+                # local CPU inference: first turn includes model load + a long snapshot prefill
+                "timeout": float(args.get("timeout") or env.get("HOMEOPS_AI_TIMEOUT") or 300.0)}
     if args.get("provider") or args.get("base_url") or args.get("model"):
         ai = {"provider": args.get("provider")
               or ("openai-compatible" if args.get("base_url") else None),
               "model": args.get("model")}
         if args.get("base_url"):
             ai["base_url"] = args["base_url"]
+        if args.get("timeout") or env.get("HOMEOPS_AI_TIMEOUT"):
+            ai["timeout"] = float(args.get("timeout") or env["HOMEOPS_AI_TIMEOUT"])
         if ai["provider"]:
             return ai
     # 2b. HOMEOPS_AI_* environment
@@ -47,6 +51,8 @@ def resolve_ai_config(args: dict, environ: dict | None = None, dep_ai: dict | No
               "model": args.get("model") or env.get("HOMEOPS_AI_MODEL")}
         if env.get("HOMEOPS_AI_BASE_URL"):
             ai["base_url"] = env["HOMEOPS_AI_BASE_URL"]
+        if env.get("HOMEOPS_AI_TIMEOUT"):
+            ai["timeout"] = float(env["HOMEOPS_AI_TIMEOUT"])
         if ai["provider"]:
             return ai
     # 2c. bare SDK key auto-detect (convenience — the classic path)
@@ -81,7 +87,7 @@ def _parse_chat_args(argv: list[str]) -> tuple[str, dict]:
     house, args = "house_a", {}
     it = iter(argv)
     for tok in it:
-        if tok in ("--model", "--provider", "--base-url", "--ollama"):
+        if tok in ("--model", "--provider", "--base-url", "--ollama", "--timeout"):
             key = tok.lstrip("-").replace("-", "_")
             args[key] = next(it, None)
         elif not tok.startswith("-"):
@@ -141,6 +147,8 @@ def chat(world, house: str, args: dict | None = None) -> int:
             print(f"  (model error: {type(e).__name__}: {str(e)[:160]})")
             print("  (the house is unaffected — no intent was proposed; try again or switch model)")
             continue
+        if out.get("degraded"):
+            print(f"  (degraded: {out['degraded']})")
         for a in out.get("actions", []):
             label = a.get("intent", {}).get("action") or a.get("cmd") or a.get("tool", "?")
             print(f"  [{a.get('status','?')}] {label}: {a.get('message','')}")
@@ -199,8 +207,21 @@ def main(argv: list[str]) -> int:
     if argv[0] in ("validate", "preflight", "serve") and len(argv) >= 2:
         from .deployment import load_deployment, validate_deployment, has_failures, render_results
         from .secrets import load_secrets
-        dep = load_deployment(argv[1])
-        secrets = load_secrets(dep.secrets_file)
+        try:
+            dep = load_deployment(argv[1])
+        except FileNotFoundError:
+            print(f"deployment file not found: {argv[1]!r} "
+                  "(start from deploy/deployment.example.yaml)")
+            return 1
+        except Exception as e:   # malformed YAML/schema — refuse cleanly, never traceback
+            print(f"invalid deployment file {argv[1]!r}: {type(e).__name__}: {e}")
+            return 1
+        from .secrets import SecretsError
+        try:
+            secrets = load_secrets(dep.secrets_file)
+        except SecretsError as e:
+            print(f"secrets error: {e} (see deploy/secrets.example.env)")
+            return 1
         if argv[0] == "validate":
             res = validate_deployment(dep, dash_token_present=bool(secrets.get("HOMEOPS_DASH_TOKEN")))
             print(render_results(res, f"validate {argv[1]}"))

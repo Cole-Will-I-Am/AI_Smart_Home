@@ -167,3 +167,19 @@ def test_malformed_gpt_arguments_degrade_safely():
     comp = OpenAIProvider(MockGPT([resp])).complete(model="gpt-5.1", system="s", tools=TOOLS,
                                                     transcript=[{"role": "user", "text": "x"}])
     assert comp.tool_calls[0].input == {}               # parse failure -> empty args, not a crash
+
+
+# --- terminal-plane regression: a bare SDK key with no SDK installed must fail CLEAN ---------
+# (sys.modules[name] = None makes `import name` raise ImportError deterministically,
+#  independent of whether the optional SDK happens to be present in the test env)
+
+@pytest.mark.parametrize("prov,mod", [("anthropic", "anthropic"), ("openai", "openai")])
+def test_missing_sdk_becomes_actionable_config_error(monkeypatch, prov, mod):
+    import sys
+    from homeops.ai.providers import provider_from_config
+    monkeypatch.setitem(sys.modules, mod, None)
+    with pytest.raises(ValueError) as ei:
+        provider_from_config({"provider": prov, "model": "m"})
+    msg = str(ei.value)
+    assert "not installed" in msg and "pip install" in msg     # actionable
+    assert "--base-url" in msg or "--ollama" in msg            # points at the SDK-free path
