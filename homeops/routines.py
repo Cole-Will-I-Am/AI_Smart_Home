@@ -1,9 +1,8 @@
 """Governed standing automations.
 
-Routines are deterministic standing automations installed by a human owner. They
-provide autonomy only when paired with standing authority: every fired step still
-routes through the CommandRouter/PermissionEngine, and L2+ steps execute only
-when covered by a standing delegation.
+Routines are deterministic standing automations installed by a human owner. Every
+fired step still routes through the CommandRouter/PermissionEngine, and L2+ steps
+execute only when covered by routine-carried authority or standing delegation.
 """
 from __future__ import annotations
 
@@ -16,11 +15,10 @@ from typing import Any
 from uuid import uuid4
 
 from .audit import AuditRecord
-from .delegations import try_delegated_execute
+from .delegations import is_delegable_action, try_delegated_execute
 from .events import Event
-from .permissions import ACTION_LEVELS, Intent, Operator
+from .permissions import ACTION_LEVELS, Intent, Operator, semantic_violation
 
-ADVISORY_EVENT_TYPES = {"anomaly", "inference"}
 DEFAULT_ROUTINE_BUDGET = 20
 
 
@@ -57,11 +55,9 @@ def _same_value(actual, expected) -> bool:
     return actual == expected or str(actual) == str(expected)
 
 
-def _event_matches(ev: Event, house_id: str, pred: dict, allow_advisory_events: bool) -> tuple[bool, str | None]:
+def _event_matches(ev: Event, house_id: str, pred: dict, _allow_advisory_events: bool) -> tuple[bool, str | None]:
     if ev.house_id != house_id:
         return False, f"{ev.house_id} != {house_id}"
-    if not allow_advisory_events and ev.type in ADVISORY_EVENT_TYPES:
-        return False, f"{ev.type} is advisory-only"
     typ = pred.get("event_type") or pred.get("type")
     if typ is not None and ev.type != typ:
         return False, f"event.type == {typ!r}"
@@ -105,9 +101,7 @@ def _validate_when_shape(when) -> None:
         raise ValueError("recent_event must be an object")
     if isinstance(pred, dict):
         typ = pred.get("event_type") or pred.get("type")
-        if typ in ADVISORY_EVENT_TYPES or "inference" in pred or "inference_type" in pred:
-            raise ValueError("advisory inference/anomaly events may not trigger routines")
-        if typ is not None:
+        if typ is not None or "inference" in pred or "inference_type" in pred:
             data = pred.get("data") or pred.get("data_equals") or {}
             if not isinstance(data, dict):
                 raise ValueError("event data predicate must be an object")
@@ -252,6 +246,7 @@ class Routine:
     window: tuple[int, int] | None = None
     budget_per_day: int = DEFAULT_ROUTINE_BUDGET
     expires: date | None = None
+    authority_max_level: int | None = None
     revoked: bool = False
     last_fired_tick: int | None = None
     last_results: list[dict] = field(default_factory=list)
@@ -294,6 +289,7 @@ class Routine:
             "window": list(self.window) if self.window else None,
             "budget_per_day": self.budget_per_day,
             "expires": self.expires.isoformat() if self.expires else None,
+            "authority_max_level": self.authority_max_level,
             "revoked": self.revoked,
             "last_fired_tick": self.last_fired_tick,
             "last_results": list(self.last_results),
@@ -312,6 +308,8 @@ class Routine:
             window=tuple(d["window"]) if d.get("window") else None,
             budget_per_day=int(d.get("budget_per_day", DEFAULT_ROUTINE_BUDGET)),
             expires=date.fromisoformat(d["expires"]) if d.get("expires") else None,
+            authority_max_level=(None if d.get("authority_max_level") is None
+                                 else int(d.get("authority_max_level"))),
             revoked=bool(d.get("revoked", False)),
             last_fired_tick=d.get("last_fired_tick"),
             last_results=list(d.get("last_results", [])),
@@ -361,6 +359,14 @@ class RoutineRegistry:
             raise ValueError("routine requires at least one then step")
         if r.budget_per_day < 1:
             raise ValueError("routine budget_per_day must be >= 1")
+        if r.authority_max_level is not None:
+            if isinstance(r.authority_max_level, bool) or not isinstance(r.authority_max_level, int):
+                raise ValueError("routine authority_max_level must be an integer 0..3 or None")
+            if r.authority_max_level < 0 or r.authority_max_level > 3:
+                raise ValueError("routine authority_max_level must be between 0 and 3")
+            if by is not None and by.max_level is not None and r.authority_max_level > by.max_level:
+                raise PermissionError(
+                    f"installer role caps at L{by.max_level}; cannot grant routine authority L{r.authority_max_level}")
         _validate_when_shape(r.when)
         if r.window is not None:
             if len(r.window) != 2 or any(not isinstance(v, int) or v < 0 or v > 23 for v in r.window):
@@ -404,7 +410,8 @@ class RoutineRegistry:
             self._save()
         return r is not None
 
-    def propose_spec(self, house_id: str, when, then_steps: list[dict]) -> dict:
+    def propose_spec(self, house_id: str, when, then_steps: list[dict],
+                     authority_max_level: int | None = None) -> dict:
         if self.world is None:
             raise RuntimeError("RoutineRegistry must be attached to a world before proposing specs")
         r = Routine(
@@ -414,6 +421,7 @@ class RoutineRegistry:
             grantor="",
             house_id=house_id,
             budget_per_day=DEFAULT_ROUTINE_BUDGET,
+            authority_max_level=authority_max_level,
         )
         r.then_steps = [_step_to_spec(house_id, s) for s in r.then_steps]
         self._validate(r)
@@ -423,8 +431,6 @@ class RoutineRegistry:
         return d
 
     def _on_event(self, ev: Event) -> None:
-        if ev.type in ADVISORY_EVENT_TYPES:
-            return
         self.evaluate(trigger_event=ev)
 
     def evaluate_tick(self) -> None:
@@ -447,7 +453,7 @@ class RoutineRegistry:
         now = self.clock()
         if not r.can_fire(now):
             return None
-        ok, why = eval_when(self.world, r.house_id, r.when, trigger_event, allow_advisory_events=False)
+        ok, why = eval_when(self.world, r.house_id, r.when, trigger_event, allow_advisory_events=True)
         if not ok:
             return None
         results = [self._execute_step(r, idx, step) for idx, step in enumerate(r.then_steps)]
@@ -462,21 +468,25 @@ class RoutineRegistry:
         if err is not None or intent is None:
             return {"index": idx, "status": "refused", "level": None, "message": err or "malformed step"}
         lvl = self.world.router.engine.level(intent.subsystem, intent.action)
-        if lvl is not None and lvl >= 2 and self.world.delegations is not None:
-            d_res, d = try_delegated_execute(self.world, intent, self.world.delegations, grantor=r.grantor)
-            if d_res is not None:
-                return {
-                    "index": idx,
-                    "status": d_res.status,
-                    "message": d_res.message,
-                    "level": d_res.level,
-                    "delegation": d.id,
-                    "intent": self._intent_dict(intent),
-                }
+        if lvl is not None and lvl >= 2:
+            inline = self._try_routine_authority_execute(r, idx, intent, lvl)
+            if inline is not None:
+                return inline
+            if self.world.delegations is not None:
+                d_res, d = try_delegated_execute(self.world, intent, self.world.delegations, grantor=r.grantor)
+                if d_res is not None:
+                    return {
+                        "index": idx,
+                        "status": d_res.status,
+                        "message": d_res.message,
+                        "level": d_res.level,
+                        "delegation": d.id,
+                        "intent": self._intent_dict(intent),
+                    }
         if lvl is not None and lvl >= 2:
             # Route through the engine as an AI-originated pending action so L2+ cannot
-            # execute merely because a routine exists. Standing delegation is the only
-            # autonomous execution path for L2/L3.
+            # execute merely because a routine exists. Routine-carried authority and
+            # standing delegation are the autonomous execution paths for L2/L3.
             op = Operator("ai", r.house_id, f"routine:{r.id}:{r.grantor}")
         else:
             op = Operator("owner", r.house_id, f"routine:{r.id}:{r.grantor}")
@@ -486,6 +496,37 @@ class RoutineRegistry:
             "status": res.status,
             "message": res.message,
             "level": res.level,
+            "intent": self._intent_dict(intent),
+        }
+
+    def _try_routine_authority_execute(self, r: Routine, idx: int, intent: Intent, lvl: int) -> dict | None:
+        assert self.world is not None
+        cap = r.authority_max_level
+        if isinstance(cap, bool) or not isinstance(cap, int) or cap < 0 or cap > 3:
+            return None
+        if lvl > cap or not is_delegable_action(intent.subsystem, intent.action):
+            return None
+        delegation_id = f"routine:{r.id}:authority"
+        grantor_op = Operator(kind="owner", active_house=intent.house_id,
+                              name=f"{delegation_id}:{r.grantor}")
+        if semantic_violation(intent, grantor_op, self.world.router.clock()) is not None:
+            return None
+        eng = self.world.router.engine
+        intent.confirm_token = eng.issue_token(intent, grantor_op)
+        try:
+            res = self.world.router.execute(intent, grantor_op)
+        finally:
+            eng.consume_token(intent)
+            intent.confirm_token = None
+        if not res.ok:
+            return None
+        self._audit_routine_authority(r, idx, intent, lvl, delegation_id)
+        return {
+            "index": idx,
+            "status": res.status,
+            "message": res.message,
+            "level": res.level,
+            "delegation": delegation_id,
             "intent": self._intent_dict(intent),
         }
 
@@ -525,6 +566,30 @@ class RoutineRegistry:
             message=f"routine {r.id} fired under {r.grantor}",
         ))
 
+    def _audit_routine_authority(self, r: Routine, idx: int, intent: Intent, lvl: int, delegation_id: str) -> None:
+        assert self.world is not None
+        self.world.router.audit.record(AuditRecord(
+            tick=self.world.engine.tick,
+            operator="owner",
+            house_id=intent.house_id,
+            subsystem="advisory",
+            target=delegation_id,
+            action="delegation_used",
+            args={
+                "grantor": r.grantor,
+                "routine_id": r.id,
+                "step_index": idx,
+                "covered": f"{intent.subsystem}.{intent.target}.{intent.action}",
+                "args": dict(intent.args),
+                "authority_max_level": r.authority_max_level,
+                "used_today": r.used_today + 1,
+                "budget": r.budget_per_day,
+            },
+            level=lvl,
+            status="delegated",
+            message=f"routine authority {r.id} executed {intent.subsystem}.{intent.action} for {r.grantor}",
+        ))
+
     def list(self, house_id: str | None = None) -> list[Routine]:
         return [r for r in self._routines.values() if house_id is None or r.house_id == house_id]
 
@@ -542,6 +607,7 @@ class RoutineRegistry:
                 "budget_per_day": r.budget_per_day,
                 "budget_remaining": r.budget_remaining(now),
                 "expires": r.expires.isoformat() if r.expires else None,
+                "authority_max_level": r.authority_max_level,
                 "revoked": r.revoked,
                 "last_fired_tick": r.last_fired_tick,
                 "last_results": list(r.last_results),

@@ -269,7 +269,12 @@ class OpsLayer:
             return {"status": "unavailable", "message": "routine registry is not attached",
                     "installed": False}
         try:
-            spec = reg.propose_spec(houses[0], args.get("when"), steps)
+            spec = reg.propose_spec(
+                houses[0],
+                args.get("when"),
+                steps,
+                authority_max_level=args.get("authority_max_level"),
+            )
         except (PermissionError, ValueError, RuntimeError) as e:
             return {"status": "refused", "message": str(e), "installed": False}
         return {"status": "routine_spec", "installed": False, "spec": _redact(spec)}

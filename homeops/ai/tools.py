@@ -104,6 +104,12 @@ TOOLS = [
             "properties": {
                 "house_id": {"type": "string"},
                 "when": {"description": "Simple live-state or recent-event predicate, same style as propose_plan step when"},
+                "authority_max_level": {
+                    "type": ["integer", "null"],
+                    "minimum": 0,
+                    "maximum": 3,
+                    "description": "Optional owner-installed routine authority cap suggestion; installing still requires a resident owner.",
+                },
                 "then_steps": {
                     "type": "array",
                     "items": {
