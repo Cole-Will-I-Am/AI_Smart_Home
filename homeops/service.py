@@ -73,8 +73,15 @@ class Service:
 
     def _housekeep(self) -> None:
         if self.dep.mode == "sim":
-            self.world.tick()
-        ok, _ = self.world.audit.verify_chain()   # second element is a failure index, not a count
+            self.world.tick()               # advances engine.tick AND steps the sim world
+        else:
+            # H1: real mode has no sim world to step, but the engine's monotonic clock must
+            # still advance — health staleness, confirmation-token TTLs, and destructive-action
+            # cooldowns are all measured in ticks. A frozen clock makes "stale" unreachable and
+            # traps one-shot cooldowns forever. One tick per housekeeping cycle is the real-mode
+            # operational clock (period = dep.tick_seconds).
+            self.world.engine.tick += 1
+        ok = self.world.audit.verify_incremental()   # M4: O(new records), not O(whole chain)
         self.audit_ok, self.audit_len = ok, len(self.world.audit.records)
         html = render_dashboard(self.world)
         with self._lock:
