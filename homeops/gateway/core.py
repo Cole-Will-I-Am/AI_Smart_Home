@@ -21,10 +21,9 @@ This generalizes the project's central result one axis further: authority was al
 under substitution of the MODEL (Part 17); here it is invariant under substitution of the SURFACE.
 """
 from __future__ import annotations
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 import secrets as _secrets
 import threading
-import time
 
 from ..permissions import Attestation, Intent
 from ..identity import IdentityStore, Principal, operator_for

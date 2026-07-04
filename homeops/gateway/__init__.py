@@ -4,4 +4,6 @@ Every surface collapses to the same structured Intent and faces the same Command
 AI ops layer; the gateway performs no permission logic of its own (the router is the sole
 authority). See core.Gateway for the logic and api for the HTTP surface.
 """
-from .core import Gateway, Device, Pending, KNOWN_SURFACES   # noqa: F401
+from .core import Gateway, Device, Pending, KNOWN_SURFACES
+
+__all__ = ["Gateway", "Device", "Pending", "KNOWN_SURFACES"]
