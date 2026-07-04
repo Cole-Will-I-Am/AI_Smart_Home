@@ -31,7 +31,7 @@ from .secrets import load_secrets, require, required_for_mode
 
 def build_service_world(dep: DeploymentConfig, secrets: dict[str, str]) -> World:
     if dep.mode == "sim":
-        return build_world(dep.houses_config, audit_path=dep.audit_path)
+        return build_world(dep.houses_config, audit_path=dep.audit_path, persist_dir=dep.state_dir)
     from .bootstrap import build_real_world
     require(secrets, required_for_mode("real", opnsense=dep.opnsense))
     return build_real_world(

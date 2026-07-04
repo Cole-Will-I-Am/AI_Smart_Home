@@ -13,6 +13,7 @@ from .adapters import SimAdapter
 from .router import CommandRouter
 from .health import HealthRegistry
 from .identity import IdentityStore
+from .delegations import DelegationRegistry
 from . import automations
 
 DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "houses.example.yaml")
@@ -31,6 +32,7 @@ class World:
     router: CommandRouter
     health: HealthRegistry
     identity: IdentityStore
+    delegations: "DelegationRegistry" = None
     notifications: list = field(default_factory=list)
 
     def tick(self, n: int = 1) -> None:
@@ -45,7 +47,7 @@ class World:
 
 def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = True, adapter=None,
                 audit_path: str | None = None, ai_l1_daily_budget: int = 60,
-                attest_key: bytes | None = None) -> World:
+                attest_key: bytes | None = None, persist_dir: str | None = None) -> World:
     """Build the world. `adapter=None` uses the in-process SimAdapter (default, for tests/demos);
     pass a real adapter (e.g. CompositeAdapter of HomeAssistantAdapter+OPNsenseAdapter) to drive
     actual hardware — nothing above the adapter layer changes. `audit_path` persists the
@@ -63,9 +65,17 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
         for eid in h.entities:
             health.heartbeat(eid, 0)   # seed: every device is responsive at boot
     router = CommandRouter(engine, state, adapter, audit, health=health)
-    identity = IdentityStore()
+    # R6: enrollments and standing consent survive a restart when persist_dir is set (real mode).
+    id_path = del_path = None
+    if persist_dir:
+        os.makedirs(persist_dir, exist_ok=True)
+        id_path = os.path.join(persist_dir, "identity.json")
+        del_path = os.path.join(persist_dir, "delegations.json")
+    identity = IdentityStore(path=id_path)
+    delegations = DelegationRegistry(path=del_path)
     world = World(houses=houses, state=state, bus=bus, ha=ha, net=net,
-                  engine=engine, audit=audit, adapter=adapter, router=router, health=health, identity=identity)
+                  engine=engine, audit=audit, adapter=adapter, router=router, health=health,
+                  identity=identity, delegations=delegations)
     if register_automations:
         automations.register(world)
     return world

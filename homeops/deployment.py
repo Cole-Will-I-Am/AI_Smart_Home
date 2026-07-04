@@ -127,6 +127,11 @@ def validate_deployment(dep: DeploymentConfig, dash_token_present: bool = False)
             fail("audit.persistence", "real mode requires a persistent audit_path (evidence trail)")
         else:
             ok("audit.persistence", dep.audit_path)
+        if not dep.state_dir:
+            warn("identity.persistence",
+                 "no state_dir — device enrollments and standing consent will NOT survive a restart (R6)")
+        else:
+            ok("identity.persistence", os.path.join(dep.state_dir, "identity.json"))
         if not dep.verify_tls:
             warn("tls", "verify_tls=false — acceptable only for self-signed appliances on a trusted VLAN")
         else:

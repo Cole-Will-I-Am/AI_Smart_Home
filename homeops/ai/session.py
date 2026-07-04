@@ -68,7 +68,8 @@ class ChatSession:
             raise ValueError("confirmations must belong to a human operator")
         self.max_tool_turns = max_tool_turns
         self.max_history_turns = max_history_turns
-        self.delegations = delegations
+        # R6: default to the world's persistent registry so standing consent survives restart
+        self.delegations = delegations if delegations is not None else getattr(world, "delegations", None)
         self.messages: list[dict] = []
         self._turn_starts: list[int] = []      # message index where each ask() began (for whole-turn trimming)
         self.pending: list[PendingConfirmation] = []
