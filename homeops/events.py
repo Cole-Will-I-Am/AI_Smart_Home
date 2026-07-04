@@ -5,8 +5,9 @@ timing to flake on. Real HA would push events over a WebSocket; the automations 
 identical either way because it only sees `Event` objects.
 """
 from __future__ import annotations
+from collections import deque
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Callable
 
 
 @dataclass
@@ -19,9 +20,12 @@ class Event:
 
 
 class EventBus:
-    def __init__(self) -> None:
+    def __init__(self, history_limit: int = 5000) -> None:
+        # M3: a long-running service publishes indefinitely; an unbounded list is a slow leak.
+        # `recent()` only ever reads the tail, so a bounded ring keeps memory flat while preserving
+        # every read this code performs. Raise history_limit if deeper forensic replay is needed.
         self._subs: list[Callable[[Event], None]] = []
-        self.history: list[Event] = []
+        self.history: deque[Event] = deque(maxlen=history_limit)
 
     def subscribe(self, handler: Callable[[Event], None]) -> None:
         self._subs.append(handler)
