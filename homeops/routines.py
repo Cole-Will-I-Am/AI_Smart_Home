@@ -448,6 +448,9 @@ class RoutineRegistry:
 
     def _maybe_fire(self, r: Routine, trigger_event: Event | None) -> dict | None:
         assert self.world is not None
+        house = self.world.houses.get(r.house_id)
+        if house is not None and getattr(house, "ai_hold", False):
+            return None                          # HUMAN_OVERRIDE (ai_hold) suspends autonomous firing
         if trigger_event is not None and trigger_event.house_id != r.house_id:
             return None
         now = self.clock()

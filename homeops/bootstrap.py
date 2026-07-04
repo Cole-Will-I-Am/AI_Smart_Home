@@ -38,6 +38,7 @@ class World:
     notifications: list = field(default_factory=list)
     anomaly_monitor: object | None = None   # vigilance tier (attached in build_world)
     inference: object | None = None         # composite advisory tier (attached in build_world)
+    director: object | None = None          # operating-mode FSM (attached in build_world)
 
     def tick(self, n: int = 1) -> None:
         for _ in range(n):
@@ -45,6 +46,8 @@ class World:
             self.ha.tick()
             if self.routines is not None:
                 self.routines.evaluate_tick()
+            if self.director is not None:
+                self.director.evaluate()
 
     def notify(self, house_id: str, message: str, urgent: bool = False) -> None:
         self.notifications.append({"house_id": house_id, "message": message, "urgent": urgent,
@@ -86,6 +89,8 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
                   engine=engine, audit=audit, adapter=adapter, router=router, health=health,
                   identity=identity, delegations=delegations, routines=routines)
     routines.attach(world)
+    from .director import Director
+    world.director = Director().attach(world)
     if register_automations:
         automations.register(world)
         from .baseline import AnomalyMonitor

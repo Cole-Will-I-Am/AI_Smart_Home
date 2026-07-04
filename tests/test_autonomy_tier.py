@@ -47,7 +47,10 @@ def test_composite_inference_is_typed_advisory_and_never_actuates(world):
     assert inferences[-1].data["inference_type"] == "leak_suspected"
     assert inferences[-1].data["advisory"] is True
     assert any("leak_suspected" in n["message"] for n in world.notifications)
-    assert len(world.audit.records) == before
+    # advisory: inference never ACTUATES. It may now trigger a Director mode transition
+    # (a leak_suspected escalation) — the only permissible new audit record.
+    new_records = world.audit.records[before:]
+    assert all(r.status == "director_transition" for r in new_records)
     assert world.state.get_state("house_a.water.main_valve") == "open"
 
 
