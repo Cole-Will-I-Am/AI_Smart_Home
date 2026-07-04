@@ -9,7 +9,7 @@
 *The AI proposes. A deterministic, fail-closed permission engine disposes.*
 
 ![python](https://img.shields.io/badge/python-3.10%2B-2f6bff?logo=python&logoColor=white&labelColor=0b1c40)
-![tests](https://img.shields.io/badge/tests-296%20passed-2ea043?labelColor=0b1c40)
+![tests](https://img.shields.io/badge/tests-381%20passed-2ea043?labelColor=0b1c40)
 ![core](https://img.shields.io/badge/core-stdlib--only-2f6bff?labelColor=0b1c40)
 ![cloud](https://img.shields.io/badge/cloud-none%20required-2f6bff?labelColor=0b1c40)
 ![models](https://img.shields.io/badge/models-any%20chat--completions%20model-2f6bff?labelColor=0b1c40)
@@ -86,6 +86,24 @@ The level is a property of the **action**, enforced server-side — the AI canno
 
 **L4/L5 have no execution path exposed to the AI** — only a recommend/notify path exists in the code.
 
+## The stack above the engine
+
+The ladder governs a single *action*. Four deterministic tiers sit above it, each in the
+engine's jurisdiction — the reasoning model is an optional worker, never a dependency:
+
+```text
+  HOUSE DIRECTOR     who is driving?   AUTONOMOUS · AI_ACTIVE · HUMAN_OVERRIDE
+     ↑ escalation detector (evidence-validated, cooldown'd) raises the mode
+  autonomy tier      routines + standing authority act — engine-gated, revocable
+  inference tier     fuses signals into situations (leak_suspected · ventilation_fault)
+  vigilance tier     learns each sensor's own normal (median/MAD), flags deviation
+  ── permission engine ──  governs every individual action (L0–L5)
+  ── physical / local ──   always works; never waits on any layer above
+```
+
+Reactive → vigilant → inferential → autonomous → *governed autonomy level*. Nothing above the
+engine actuates except through it; nothing below it depends on anything above.
+
 ## Quickstart — a full estate in software, thirty seconds
 
 Both houses are simulated in-process (no hardware, no HA, no network), so the entire
@@ -93,8 +111,9 @@ architecture and permission model can be validated before a single device is bou
 
 ```bash
 pip install -r requirements.txt        # PyYAML + pytest (anthropic only for the live test)
-pytest -q                              # 296 offline tests: permissions, router, automations,
+pytest -q                              # 381 offline tests: permissions, router, automations,
                                        #   fail-safe, local-first, AI-ops, audit, health, RBAC,
+                                       #   vigilance, inference, autonomy (routines), director,
                                        #   portfolio, exporters, dashboard, service, preflight
 python scripts/run_scenario.py all    # leak / grid-loss / fire-CO / intrusion / rogue-device
 python scripts/demo.py                # end-to-end: cross-house guard, WAN-down local-first, L4 refusal
@@ -213,6 +232,9 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 | Standing consent abused | **delegation certificates** are bounded to explicit delegable actions (L1/L2 plus reversible L3 power/infra only), windowed, budgeted, revocable; safety-critical/destructive actions and L4/L5 remain non-delegable; envelopes outrank them; tokens still never enter model context; `grant()` checks the **grantor's** authority, not just the action's |
 | Model spams envelope-legal L1 actions all night | an **AI L1 nuisance budget** caps AI-originated L1 actuation per house per day; humans and emergency automations are exempt |
 | Model lies about what a pending action does, to farm a rubber-stamp | every `confirm_required` carries an **engine-signed attestation** (HMAC, key outside model context) rendering the true deed; `confirm()` refuses any signature mismatch — consent attaches to the deed, not its narration |
+| A noisy statistical inference drives actuation | the inference tier is **advisory-only** — it emits typed events and never actuates; any routine it triggers still routes every step through the engine, and safety-critical/destructive steps are never auto-authorized |
+| The AI installs a standing automation that runs the house | routines are **installed only by a human owner** (the AI proposes via `propose_routine`, never self-installs); L2+ steps fire autonomously only under carried install-time authority or a standing delegation; safety-critical/destructive steps and L4/L5 are refused auto-authorization |
+| The house runs itself with no sense of when to stop | the **House Director** escalates the operating mode to a human on a life-safety inference, health cascade, or repeated actuation failure (evidence-validated, cooldown'd); it governs *mode*, never actuation, and every transition is hash-chained |
 | Houses collapse onto shared devices | `strict_entity_map` fails startup if any controllable entity lacks an explicit mapping; the validator also rejects duplicate targets |
 | Python process dies with the safety logic | `homeops/exporters/` emits the life-safety subset (leak, fire/CO, freeze) as **native HA automations** — the Python layer is the coordination tier, never the last line of defense |
 
@@ -232,6 +254,9 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 | `homeops/simulator/` | both houses in software: devices, network, scenarios |
 | `homeops/baseline.py` | vigilance tier: robust per-entity hour-of-week baselines (median/MAD) -> advisory `anomaly` events; spike-proof, never actuates |
 | `homeops/energy.py` | economics tier: deterministic day-ahead battery/EV planner (never-worse guarantee); emits L3-gated *proposed* intents |
+| `homeops/inference.py` | inferential tier: fuses multiple advisory signals into higher-order typed events (`leak_suspected` = pressure-drop ∧ flow-rise; `ventilation_fault` = CO₂-high ∧ unoccupied); advisory-only, never actuates |
+| `homeops/routines.py` | governed standing automations: owner-installed `when → then` rules the engine runs continuously; each step routes through the ladder; carried install-time authority for reversible steps; AI proposes (`propose_routine`), never self-installs |
+| `homeops/director.py` | **House Director**: per-house operating-mode FSM (AUTONOMOUS · AI_ACTIVE · HUMAN_OVERRIDE) + escalation detector; governs *mode*, never actuation; every transition hash-chained |
 | `homeops/portfolio.py` · `dashboard.py` | N-property control plane · HTML oversight view |
 | `homeops/exporters/` | native HA life-safety automation YAML |
 | `homeops/service.py` · `deployment.py` · `secrets.py` · `preflight.py` | runtime daemon · descriptor + offline lint · fail-closed secrets · read-only commissioning |
@@ -240,12 +265,14 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 ## Status — the honest ladder
 
 ```text
-reference implementation      ✓  complete, 296 tests
+reference implementation      ✓  complete, 381 tests
 pilot-ready software          ✓  audit chain · verified actuation · RBAC ·
                                  semantic envelopes · delegation certs ·
                                  authority-gated rollback · any-model plug ·
                                  L1 nuisance budget · signed attestations ·
                                  control-surface gateway (phone/tablet/voice) ·
+                                 vigilance + inference tiers · standing automations ·
+                                 House Director (operating-mode FSM) ·
                                  N-property plane · HA life-safety export ·
                                  dashboard · runtime service · secrets ·
                                  preflight commissioning
