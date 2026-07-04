@@ -34,6 +34,7 @@ class World:
     identity: IdentityStore
     delegations: "DelegationRegistry" = None
     notifications: list = field(default_factory=list)
+    anomaly_monitor: object | None = None   # vigilance tier (attached in build_world)
 
     def tick(self, n: int = 1) -> None:
         for _ in range(n):
@@ -78,6 +79,8 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
                   identity=identity, delegations=delegations)
     if register_automations:
         automations.register(world)
+        from .baseline import AnomalyMonitor
+        world.anomaly_monitor = AnomalyMonitor(world).attach()
     return world
 
 

@@ -77,6 +77,15 @@ def register(world) -> None:
             do(h, "climate", "thermostat_main", "set_temperature", {"temperature": 72})
             world.notify(h, "Freeze risk: heating vulnerable zone")
 
+        # 11. Statistical anomaly (from the baseline vigilance tier) -> ADVISORY ONLY.
+        #     Statistics are evidence, not authority: notify, never actuate. Physical
+        #     actuation still requires the independent signals the rules above demand.
+        elif ev.type == "anomaly":
+            d = ev.data
+            world.notify(h, (f"Anomaly: {ev.entity_id} {d.get('metric')}={d.get('value')} "
+                             f"(expected ~{d.get('expected')}, z={d.get('z')}, n={d.get('n')})"),
+                         urgent=float(d.get("z", 0)) >= 8.0)
+
         # 10. Suspicious activity -> exterior lights, record, lock exterior doors
         elif ev.type == "perimeter" and ev.data.get("suspicious"):
             do(h, "light", "exterior_front", "turn_on")

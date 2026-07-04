@@ -2,6 +2,7 @@
 
     homeops demo                                             # 3-minute guided tour, no hardware
     homeops init [1|2|3|4]                                   # write a deployment.yaml from a preset
+    homeops energy [house]                                   # day-ahead battery/EV plan (advice, L3-gated)
     python -m homeops.cli status
     python -m homeops.cli command house_a light living_room turn_on
     homeops chat [house_a] [--model M] [--provider P] [--base-url URL] [--ollama M] [--timeout S]
@@ -286,6 +287,25 @@ def init(argv: list[str]) -> int:
     return 0
 
 
+def energy(house_id: str) -> int:
+    """Day-ahead plan on the deterministic example day; the schedule is advice —
+    its intents are L3 and still face the permission engine."""
+    from .energy import example_day, plan_day
+    inputs, batt = example_day()
+    plan = plan_day(inputs, batt)
+    print(f"Day-ahead energy plan \u2014 {house_id}  "
+          f"(battery {batt.capacity_kwh} kWh @ {batt.max_discharge_kw} kW, EV {inputs.ev_kwh} kWh overnight)")
+    print(" hr  $/kWh  load  solar   ev   batt   grid    soc")
+    for hp in plan.hours:
+        print(f" {hp.hour:02d}  {hp.price:5.2f}  {hp.load_kw:4.1f}  {hp.solar_kw:5.1f} "
+              f"{hp.ev_kw:5.1f} {hp.battery_kw:6.2f} {hp.grid_kw:6.2f}  {hp.soc_kwh:5.2f}")
+    print(f"cost: ${plan.cost:.2f}   do-nothing: ${plan.baseline_cost:.2f}   "
+          f"savings: ${plan.savings:.2f}/day" + ("  (baseline kept: heuristic didn't pay)" if plan.used_baseline else ""))
+    n = len(plan.intents(house_id))
+    print(f"{n} proposed intents (battery set_mode / evcharger set_limit \u2014 all L3, engine-gated)")
+    return 0
+
+
 def main(argv: list[str]) -> int:
     world = build_world()
     if not argv or argv[0] == "status":
@@ -295,6 +315,9 @@ def main(argv: list[str]) -> int:
         return demo()
     if argv[0] == "init":
         return init(argv[1:])
+    if argv[0] == "energy":
+        return energy(argv[1] if len(argv) > 1 else "house_a")
+
     if argv[0] == "command" and len(argv) >= 5:
         house, subsystem, target, action = argv[1:5]
         r = world.router.execute(Intent(house, subsystem, target, action),

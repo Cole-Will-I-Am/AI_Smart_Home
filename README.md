@@ -9,7 +9,7 @@
 *The AI proposes. A deterministic, fail-closed permission engine disposes.*
 
 ![python](https://img.shields.io/badge/python-3.10%2B-2f6bff?logo=python&logoColor=white&labelColor=0b1c40)
-![tests](https://img.shields.io/badge/tests-282%20passed-2ea043?labelColor=0b1c40)
+![tests](https://img.shields.io/badge/tests-296%20passed-2ea043?labelColor=0b1c40)
 ![core](https://img.shields.io/badge/core-stdlib--only-2f6bff?labelColor=0b1c40)
 ![cloud](https://img.shields.io/badge/cloud-none%20required-2f6bff?labelColor=0b1c40)
 ![models](https://img.shields.io/badge/models-any%20chat--completions%20model-2f6bff?labelColor=0b1c40)
@@ -93,7 +93,7 @@ architecture and permission model can be validated before a single device is bou
 
 ```bash
 pip install -r requirements.txt        # PyYAML + pytest (anthropic only for the live test)
-pytest -q                              # 282 offline tests: permissions, router, automations,
+pytest -q                              # 296 offline tests: permissions, router, automations,
                                        #   fail-safe, local-first, AI-ops, audit, health, RBAC,
                                        #   portfolio, exporters, dashboard, service, preflight
 python scripts/run_scenario.py all    # leak / grid-loss / fire-CO / intrusion / rogue-device
@@ -230,6 +230,8 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 | `homeops/ai/` | model-agnostic ops layer (`providers.py`: Claude native · GPT SDK · any OpenAI-compatible/Ollama endpoint over stdlib HTTP): operational charter, gated tools, stateful resident chat with attestation surfacing (`session.py`), deterministic fallback |
 | `homeops/adapters/` | sim, Home Assistant, OPNsense, composite, per-property |
 | `homeops/simulator/` | both houses in software: devices, network, scenarios |
+| `homeops/baseline.py` | vigilance tier: robust per-entity hour-of-week baselines (median/MAD) -> advisory `anomaly` events; spike-proof, never actuates |
+| `homeops/energy.py` | economics tier: deterministic day-ahead battery/EV planner (never-worse guarantee); emits L3-gated *proposed* intents |
 | `homeops/portfolio.py` · `dashboard.py` | N-property control plane · HTML oversight view |
 | `homeops/exporters/` | native HA life-safety automation YAML |
 | `homeops/service.py` · `deployment.py` · `secrets.py` · `preflight.py` | runtime daemon · descriptor + offline lint · fail-closed secrets · read-only commissioning |
@@ -238,7 +240,7 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 ## Status — the honest ladder
 
 ```text
-reference implementation      ✓  complete, 282 tests
+reference implementation      ✓  complete, 296 tests
 pilot-ready software          ✓  audit chain · verified actuation · RBAC ·
                                  semantic envelopes · delegation certs ·
                                  authority-gated rollback · any-model plug ·
