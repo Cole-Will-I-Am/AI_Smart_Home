@@ -76,6 +76,53 @@ TOOLS = [
         },
     },
     {
+        "name": "trend",
+        "description": "Read baseline trend for an entity: rising/falling/steady plus slope and magnitude. Pure read.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "house_id": {"type": "string"},
+                "entity_id": {"type": "string", "description": "Fully-qualified entity id, or subsystem.name with house_id"},
+            },
+            "required": ["house_id", "entity_id"],
+        },
+    },
+    {
+        "name": "list_routines",
+        "description": "List installed standing automations, last-fired tick, and budget remaining. Never returns tokens.",
+        "input_schema": {
+            "type": "object",
+            "properties": {"house_id": {"type": "string"}},
+        },
+    },
+    {
+        "name": "propose_routine",
+        "description": ("Validate and return a standing routine SPEC for a resident owner to install. "
+                        "This does not install or execute anything."),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "house_id": {"type": "string"},
+                "when": {"description": "Simple live-state or recent-event predicate, same style as propose_plan step when"},
+                "then_steps": {
+                    "type": "array",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "house_id": {"type": "string"},
+                            "subsystem": {"type": "string"},
+                            "target": {"type": "string"},
+                            "action": {"type": "string"},
+                            "args": {"type": "object"},
+                        },
+                        "required": ["subsystem", "target", "action"],
+                    },
+                },
+            },
+            "required": ["house_id", "when", "then_steps"],
+        },
+    },
+    {
         "name": "propose_command",
         "description": ("Propose a control action. The permission engine validates and executes it. "
                         "L1 executes; L2/L3 return confirm_required (a human must confirm); "

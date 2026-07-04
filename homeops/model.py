@@ -40,6 +40,8 @@ CANON: list[tuple[str, str, str, bool, Any]] = [
     ("sensor", "temp_basement", "temp", False, 55),
     ("sensor", "flow_meter", "flow_meter", False, 0.0),
     ("sensor", "pressure", "pressure", False, 60),
+    ("sensor", "co2", "co2", False, 600),
+    ("sensor", "occupancy", "occupancy", False, 1),
     ("sensor", "freeze_garage", "freeze", False, 40),
     ("water", "main_valve", "main_water_valve", True, "open"),
     ("water", "irrigation", "irrigation", False, "off"),

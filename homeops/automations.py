@@ -92,6 +92,13 @@ def register(world) -> None:
                              f"(expected ~{d.get('expected')}, z={d.get('z')}, n={d.get('n')})"),
                          urgent=float(d.get("z", 0)) >= 8.0)
 
+        # 12. Composite inference (from the deterministic fusion tier) -> ADVISORY ONLY.
+        #     Higher-order evidence enriches L0 and informs residents; it never actuates.
+        elif ev.type == "inference":
+            d = ev.data
+            world.notify(h, f"Inference advisory: {d.get('inference_type')} — {d.get('message', '')}",
+                         urgent=d.get("severity") in {"urgent", "critical"})
+
         # 10. Suspicious activity -> exterior lights, record, lock exterior doors
         elif ev.type == "perimeter" and ev.data.get("suspicious"):
             do(h, "light", "exterior_front", "turn_on")

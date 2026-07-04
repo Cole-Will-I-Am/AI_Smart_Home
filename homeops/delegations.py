@@ -206,9 +206,11 @@ class DelegationRegistry:
             self._save()
         return d is not None
 
-    def match(self, intent: Intent) -> Delegation | None:
+    def match(self, intent: Intent, grantor: str | None = None) -> Delegation | None:
         now = self.clock()
         for d in self._delegations.values():
+            if grantor is not None and d.grantor != grantor:
+                continue
             if d.matches(intent, now):
                 return d
         return None
@@ -220,7 +222,7 @@ class DelegationRegistry:
         return len(self._delegations)
 
 
-def try_delegated_execute(world, intent: Intent, registry: DelegationRegistry):
+def try_delegated_execute(world, intent: Intent, registry: DelegationRegistry, grantor: str | None = None):
     """(Result, Delegation) if a standing certificate covered AND executed the intent, else (None, None).
 
     The engine — never the model — mints and consumes the confirmation token, under an
@@ -228,7 +230,7 @@ def try_delegated_execute(world, intent: Intent, registry: DelegationRegistry):
     so a delegation cannot standing-approve an out-of-envelope value. Non-executed outcomes
     leave the intent on the ordinary confirm_required path and consume no budget.
     """
-    d = registry.match(intent)
+    d = registry.match(intent, grantor=grantor)
     if d is None:
         return None, None
     grantor_op = Operator(kind="owner", active_house=intent.house_id,

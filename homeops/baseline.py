@@ -51,6 +51,18 @@ def robust_z(value: float, samples: list[float]) -> tuple[float, float]:
     return abs(value - med) / (sigma + _EPS), med
 
 
+def _slope(xs: list[float]) -> float:
+    n = len(xs)
+    if n < 2:
+        return 0.0
+    mean_x = (n - 1) / 2.0
+    mean_y = sum(xs) / n
+    denom = sum((i - mean_x) ** 2 for i in range(n))
+    if denom <= _EPS:
+        return 0.0
+    return sum((i - mean_x) * (x - mean_y) for i, x in enumerate(xs)) / denom
+
+
 @dataclass
 class Anomaly:
     house_id: str
@@ -102,6 +114,29 @@ class BaselineModel:
         if verdict is None:
             bucket.append(float(value))
         return verdict
+
+    def trend(self, house_id: str, entity_id: str, slot: int | None = None) -> dict:
+        """Return a JSON-safe trend summary from learned buckets.
+
+        If a slot is supplied and trained, use that bucket; otherwise aggregate all
+        buckets for the entity. The result is pure read state for L0 tooling.
+        """
+        samples: list[float] = []
+        if slot is not None:
+            bucket = self._buckets.get((house_id, entity_id, int(slot) % SLOTS))
+            if bucket is not None:
+                samples = list(bucket)
+        if not samples:
+            for (h, e, _s), bucket in self._buckets.items():
+                if h == house_id and e == entity_id:
+                    samples.extend(bucket)
+        if not samples:
+            return {"samples": 0, "baseline": None, "slope": None}
+        return {
+            "samples": len(samples),
+            "baseline": round(_median(samples), 4),
+            "slope": round(_slope(samples), 6),
+        }
 
     # -- persistence (JSON-safe) -----------------------------------------------------
     def to_dict(self) -> dict:

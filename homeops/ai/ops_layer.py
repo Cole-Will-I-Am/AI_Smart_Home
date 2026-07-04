@@ -8,13 +8,13 @@ hands for safety.
 """
 from __future__ import annotations
 from dataclasses import asdict
-import re
 from typing import Any
 
 from ..delegations import is_delegable_action, try_delegated_execute
 from ..permissions import (
     DESTRUCTIVE_COOLDOWN, SAFETY_CRITICAL, Intent, Operator, requires_confirmation,
 )
+from ..routines import eval_when as eval_routine_when
 from .fallback import deterministic_response
 from .prompts import SYSTEM_PROMPT, render_snapshot
 from .providers import as_provider
@@ -72,30 +72,6 @@ def _redact(value):
     if isinstance(value, tuple):
         return [_redact(v) for v in value]
     return value
-
-
-def _literal(text: str):
-    s = text.strip()
-    if (s.startswith('"') and s.endswith('"')) or (s.startswith("'") and s.endswith("'")):
-        return s[1:-1]
-    low = s.lower()
-    if low == "true":
-        return True
-    if low == "false":
-        return False
-    if low in ("none", "null"):
-        return None
-    try:
-        return int(s)
-    except ValueError:
-        try:
-            return float(s)
-        except ValueError:
-            return s
-
-
-def _same_value(actual, expected) -> bool:
-    return actual == expected or str(actual) == str(expected)
 
 
 class OpsLayer:
@@ -225,6 +201,79 @@ class OpsLayer:
             })
         return {"houses": out}
 
+    def _trend(self, house_id: str | None, entity_id: str | None,
+               operator: Operator | None) -> dict:
+        if not house_id or not entity_id:
+            return {"status": "refused", "message": "trend requires house_id and entity_id"}
+        houses, err = _visible_houses(self.world, house_id, operator)
+        if err:
+            return {"status": "refused", "message": err}
+        hid = houses[0]
+        eid = _entity_id_for(hid, entity_id)
+        mon = getattr(self.world, "anomaly_monitor", None)
+        model = getattr(mon, "model", None)
+        if model is None:
+            return {"status": "unavailable", "entity_id": eid,
+                    "message": "baseline monitor is not attached"}
+        slot = mon._slot(self.world.engine.tick) if hasattr(mon, "_slot") else None
+        summary = model.trend(hid, eid, slot)
+        baseline = summary.get("baseline")
+        slope = summary.get("slope")
+        raw_current = self.world.state.get_state(eid)
+        try:
+            current = float(raw_current)
+        except (TypeError, ValueError):
+            current = None
+        floor = max(0.01, abs(float(baseline)) * 0.01) if baseline is not None else 0.01
+        delta = None
+        magnitude = None
+        if current is not None and baseline is not None:
+            delta = round(current - float(baseline), 6)
+            magnitude = abs(delta)
+            direction = "steady" if magnitude <= floor else ("rising" if delta > 0 else "falling")
+        elif slope is not None:
+            magnitude = abs(float(slope))
+            direction = "steady" if magnitude <= floor else ("rising" if float(slope) > 0 else "falling")
+        else:
+            direction = "unknown"
+        return {"status": "ok", "house_id": hid, "entity_id": eid, "direction": direction,
+                "slope": slope, "magnitude": magnitude, "baseline": baseline, "current": raw_current,
+                "baseline_delta": delta, "samples": summary.get("samples", 0)}
+
+    def _list_routines(self, house_id: str | None, operator: Operator | None) -> dict:
+        houses, err = _visible_houses(self.world, house_id, operator)
+        if err:
+            return {"routines": [], "message": err}
+        routines = []
+        reg = getattr(self.world, "routines", None)
+        if reg is not None:
+            allowed = set(houses)
+            for hid in houses:
+                for r in reg.to_public(hid):
+                    if r["house_id"] in allowed:
+                        routines.append(_redact(r))
+        return {"routines": routines}
+
+    def _propose_routine(self, args: dict, active_house: str,
+                         operator: Operator | None) -> dict:
+        house_id = args.get("house_id") or active_house
+        houses, err = _visible_houses(self.world, house_id, operator)
+        if err:
+            return {"status": "refused", "message": err, "installed": False}
+        steps = args.get("then_steps")
+        if not isinstance(steps, list):
+            return {"status": "refused", "message": "propose_routine requires then_steps as a list",
+                    "installed": False}
+        reg = getattr(self.world, "routines", None)
+        if reg is None:
+            return {"status": "unavailable", "message": "routine registry is not attached",
+                    "installed": False}
+        try:
+            spec = reg.propose_spec(houses[0], args.get("when"), steps)
+        except (PermissionError, ValueError, RuntimeError) as e:
+            return {"status": "refused", "message": str(e), "installed": False}
+        return {"status": "routine_spec", "installed": False, "spec": _redact(spec)}
+
     def _explain_action(self, active_house: str, args: dict) -> dict:
         subsystem, action = args.get("subsystem"), args.get("action")
         if not subsystem or not action:
@@ -263,41 +312,7 @@ class OpsLayer:
 
     # --- plan helpers --------------------------------------------------------
     def _eval_when(self, house_id: str, when) -> tuple[bool, str | None]:
-        if when in (None, "", {}):
-            return True, None
-        if isinstance(when, str):
-            m = re.match(r"^\s*([A-Za-z0-9_.:-]+)\s*(==|!=)\s*(.+?)\s*$", when)
-            if not m:
-                return False, "invalid when predicate"
-            eid, op, raw = m.groups()
-            actual = self.world.state.get_state(_entity_id_for(house_id, eid))
-            expected = _literal(raw)
-            ok = _same_value(actual, expected)
-            return (ok if op == "==" else not ok), f"{_entity_id_for(house_id, eid)} {op} {expected!r}"
-        if not isinstance(when, dict):
-            return False, "invalid when predicate"
-        raw_eid = when.get("entity_id") or when.get("entity") or when.get("target")
-        if not raw_eid:
-            return False, "when predicate requires entity_id"
-        eid = _entity_id_for(house_id, raw_eid)
-        actual = self.world.state.get_state(eid)
-        if "equals" in when or "eq" in when or "state" in when:
-            expected = when.get("equals", when.get("eq", when.get("state")))
-            return _same_value(actual, expected), f"{eid} == {expected!r}"
-        if "not_equals" in when or "ne" in when:
-            expected = when.get("not_equals", when.get("ne"))
-            return not _same_value(actual, expected), f"{eid} != {expected!r}"
-        if "in" in when:
-            vals = when["in"]
-            if not isinstance(vals, list):
-                return False, "when 'in' must be a list"
-            return any(_same_value(actual, v) for v in vals), f"{eid} in {vals!r}"
-        if "not_in" in when:
-            vals = when["not_in"]
-            if not isinstance(vals, list):
-                return False, "when 'not_in' must be a list"
-            return not any(_same_value(actual, v) for v in vals), f"{eid} not_in {vals!r}"
-        return False, "unsupported when predicate"
+        return eval_routine_when(self.world, house_id, when)
 
     def _run_model_intent(self, intent: Intent, active_house: str) -> dict:
         r = self.world.router.execute(intent, _model_operator(active_house))
@@ -376,6 +391,12 @@ class OpsLayer:
             return self._audit_tail(args.get("house_id"), args.get("n", 20), operator)
         if name == "situation":
             return self._situation(args.get("house_id"), operator)
+        if name == "trend":
+            return self._trend(args.get("house_id"), args.get("entity_id"), operator)
+        if name == "list_routines":
+            return self._list_routines(args.get("house_id"), operator)
+        if name == "propose_routine":
+            return self._propose_routine(args, active_house, operator)
         if name == "recommend":
             r = w.router.recommend(args.get("house_id", active_house), args.get("message", ""),
                                    Operator("ai", active_house, "ai-ops"))
@@ -437,7 +458,7 @@ class OpsLayer:
             results = []
             for tc in comp.tool_calls:
                 out = self._run_tool(tc.name, tc.input, active_house)
-                if tc.name in ("propose_command", "propose_plan", "recommend"):
+                if tc.name in ("propose_command", "propose_plan", "propose_routine", "recommend"):
                     actions.append({"tool": tc.name, **out})
                 results.append({"id": tc.id, "name": tc.name, "output": out})
             transcript.append({"role": "tools", "results": results})

@@ -130,7 +130,7 @@ class ChatSession:
                 for tc in comp.tool_calls:
                     out = self.ops._run_tool(tc.name, tc.input, self.active_house, operator=self.operator)
                     out.pop("confirm_token", None)   # belt-and-braces: the engine already issues none to "ai"
-                    if tc.name in ("propose_command", "propose_plan", "recommend"):
+                    if tc.name in ("propose_command", "propose_plan", "propose_routine", "recommend"):
                         entry = {"tool": tc.name, **out}
                         if tc.name == "propose_command":
                             entry["intent"] = dict(tc.input)

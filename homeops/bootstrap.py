@@ -14,6 +14,7 @@ from .router import CommandRouter
 from .health import HealthRegistry
 from .identity import IdentityStore
 from .delegations import DelegationRegistry
+from .routines import RoutineRegistry
 from . import automations
 
 DEFAULT_CONFIG = os.path.join(os.path.dirname(os.path.dirname(__file__)), "config", "houses.example.yaml")
@@ -33,13 +34,17 @@ class World:
     health: HealthRegistry
     identity: IdentityStore
     delegations: "DelegationRegistry" = None
+    routines: "RoutineRegistry" = None
     notifications: list = field(default_factory=list)
     anomaly_monitor: object | None = None   # vigilance tier (attached in build_world)
+    inference: object | None = None         # composite advisory tier (attached in build_world)
 
     def tick(self, n: int = 1) -> None:
         for _ in range(n):
             self.engine.tick += 1
             self.ha.tick()
+            if self.routines is not None:
+                self.routines.evaluate_tick()
 
     def notify(self, house_id: str, message: str, urgent: bool = False) -> None:
         self.notifications.append({"house_id": house_id, "message": message, "urgent": urgent,
@@ -68,20 +73,25 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
                 health.heartbeat(eid, 0)   # sim devices are in-process and responsive at boot
     router = CommandRouter(engine, state, adapter, audit, health=health)
     # R6: enrollments and standing consent survive a restart when persist_dir is set (real mode).
-    id_path = del_path = None
+    id_path = del_path = routine_path = None
     if persist_dir:
         os.makedirs(persist_dir, exist_ok=True)
         id_path = os.path.join(persist_dir, "identity.json")
         del_path = os.path.join(persist_dir, "delegations.json")
+        routine_path = os.path.join(persist_dir, "routines.json")
     identity = IdentityStore(path=id_path)
     delegations = DelegationRegistry(path=del_path)
+    routines = RoutineRegistry(path=routine_path)
     world = World(houses=houses, state=state, bus=bus, ha=ha, net=net,
                   engine=engine, audit=audit, adapter=adapter, router=router, health=health,
-                  identity=identity, delegations=delegations)
+                  identity=identity, delegations=delegations, routines=routines)
+    routines.attach(world)
     if register_automations:
         automations.register(world)
         from .baseline import AnomalyMonitor
+        from .inference import InferenceRegistry
         world.anomaly_monitor = AnomalyMonitor(world).attach()
+        world.inference = InferenceRegistry().attach(world)
     return world
 
 
