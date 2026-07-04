@@ -185,6 +185,20 @@ def semantic_violation(intent: "Intent", operator: "Operator", now) -> str | Non
     return inv(intent.args, now) if inv else None
 
 
+def requires_confirmation(intent: "Intent", operator: "Operator", level: int | None) -> bool:
+    """Structural confirmation policy for the ladder.
+
+    Local automations run as `system` and emergency-flagged intents are pre-authorized emergency
+    responses, so neither path waits on a human token. All other explicit confirmation verbs and
+    every L3+ executable action require confirmation.
+    """
+    if operator.kind == "system" or intent.emergency:
+        return False
+    if (intent.subsystem, intent.action) in CONFIRM_REQUIRED:
+        return True
+    return level is not None and level >= 3
+
+
 @dataclass
 class Operator:
     kind: str            # owner | ai | system | guest

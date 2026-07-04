@@ -16,7 +16,7 @@ from datetime import datetime
 
 from .permissions import (
     PermissionEngine, Intent, Operator, Result, CONFIRM_REQUIRED, SAFETY_CRITICAL, EXPECTED_STATE,
-    ROLLBACK_INVERSE, semantic_violation,
+    ROLLBACK_INVERSE, semantic_violation, requires_confirmation,
 )
 from .audit import AuditLog, AuditRecord
 from .adapters.base import Adapter
@@ -97,7 +97,7 @@ class CommandRouter:
         violation = semantic_violation(intent, operator, self.clock())
 
         # confirmation gate
-        needs_confirm = (intent.subsystem, intent.action) in CONFIRM_REQUIRED or violation is not None
+        needs_confirm = requires_confirmation(intent, operator, level) or violation is not None
         if operator.kind == "ai" and level >= 2:
             needs_confirm = True   # AI's L2+ control is conditioned on a human confirmation
         # H4: a token, once validated here, must not be consumed until the action actually
@@ -106,7 +106,7 @@ class CommandRouter:
         # at the point of actuation.
         consume_token_at_actuation = False
         if needs_confirm:
-            by_emergency = operator.kind == "system" and intent.emergency
+            by_emergency = operator.kind == "system" or intent.emergency
             by_token = eng.peek_token(intent, operator)
             consume_token_at_actuation = by_token
             authorized = by_emergency or by_token

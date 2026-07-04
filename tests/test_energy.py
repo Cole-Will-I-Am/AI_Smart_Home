@@ -66,9 +66,9 @@ def test_never_worse_does_not_report_savings_from_depleting_battery_soc():
 
 def test_plan_intents_face_the_L3_gate(bare):
     """The planner proposes; the engine disposes. Battery set_mode is L3
-    hardware-gated but reversible (not CONFIRM_REQUIRED): an AI operator proposing a
-    plan step gets confirm_required with NO token — a human must approve — while an
-    owner executes the same step directly. The planner holds no authority of its own."""
+    hardware-gated and structurally confirmed: an AI operator proposing a plan step gets
+    confirm_required with NO token, and an owner must complete the same token dance. The
+    planner holds no authority of its own."""
     inputs, batt = example_day()
     plan = plan_day(inputs, batt)
     pairs = plan.intents("house_a")
@@ -78,7 +78,9 @@ def test_plan_intents_face_the_L3_gate(bare):
     r_ai = bare.router.execute(intent, ai())
     assert r_ai.status == "confirm_required" and r_ai.confirm_token is None
     r_owner = bare.router.execute(intent, owner())
-    assert r_owner.status == "executed"
+    assert r_owner.status == "confirm_required" and r_owner.confirm_token
+    intent.confirm_token = r_owner.confirm_token
+    assert bare.router.execute(intent, owner()).status == "executed"
 
 
 def test_solar_surplus_is_banked_before_export():

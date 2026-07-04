@@ -1,3 +1,5 @@
+import pytest
+
 from homeops.permissions import Intent, Operator
 
 
@@ -7,6 +9,34 @@ def owner():
 
 def ai():
     return Operator("ai", "house_a")
+
+
+def system():
+    return Operator("system", "house_a", "local-automations")
+
+
+PREVIOUSLY_UNGATED_L3_ACTIONS = [
+    ("battery", "main", "set_mode", {"mode": "backup"}),
+    ("climate", "thermostat_main", "set_mode", {"value": "eco"}),
+    ("evcharger", "main", "set_limit", {"amps": 16}),
+    ("hvac", "main", "emergency_shutoff", {}),
+    ("power", "breaker_ev", "breaker_on", {}),
+    ("power", "load_shed", "load_shed", {"tier": "nonessential"}),
+    ("water", "main_valve", "open_main", {}),
+]
+
+
+def _l3_intent(case, *, confirm_token=None, emergency=False):
+    subsystem, target, action, args = case
+    return Intent("house_a", subsystem, target, action, dict(args),
+                  confirm_token=confirm_token, emergency=emergency)
+
+
+def _approve_l3_target(bare, case):
+    subsystem, target, _, _ = case
+    ent = bare.state.entity(f"house_a.{subsystem}.{target}")
+    assert ent is not None
+    ent.approved_hardware = True
 
 
 def test_L1_routine_executes_directly(bare):
@@ -62,9 +92,14 @@ def test_L5_prohibited(bare):
 
 
 def test_L3_requires_approved_hardware(bare):
-    # climate.set_mode is L3, but a thermostat is not approved hardware -> refused
-    r = bare.router.execute(Intent("house_a", "climate", "thermostat_main", "set_mode", {"value": "eco"}), owner())
-    assert r.status == "refused" and "approved" in r.message
+    # climate.set_mode is L3, and the thermostat is not approved hardware. The confirmation gate
+    # comes first; with a valid token, the downstream hardware gate still refuses it.
+    r1 = bare.router.execute(Intent("house_a", "climate", "thermostat_main", "set_mode", {"value": "eco"}), owner())
+    assert r1.status == "confirm_required" and r1.confirm_token
+    r2 = bare.router.execute(
+        Intent("house_a", "climate", "thermostat_main", "set_mode", {"value": "eco"},
+               confirm_token=r1.confirm_token), owner())
+    assert r2.status == "refused" and "approved" in r2.message
 
 
 def test_L3_approved_hardware_with_confirm(bare):
@@ -75,9 +110,45 @@ def test_L3_approved_hardware_with_confirm(bare):
     assert r2.status == "executed"
 
 
+@pytest.mark.parametrize("case", PREVIOUSLY_UNGATED_L3_ACTIONS)
+def test_previously_ungated_L3_requires_confirmation_without_token(bare, case):
+    _approve_l3_target(bare, case)
+    r = bare.router.execute(_l3_intent(case), owner())
+    assert r.status == "confirm_required"
+    assert r.level == 3
+    assert r.confirm_token
+
+
+@pytest.mark.parametrize("case", PREVIOUSLY_UNGATED_L3_ACTIONS)
+def test_previously_ungated_L3_valid_token_executes(bare, case):
+    _approve_l3_target(bare, case)
+    r1 = bare.router.execute(_l3_intent(case), owner())
+    assert r1.status == "confirm_required" and r1.confirm_token
+    r2 = bare.router.execute(_l3_intent(case, confirm_token=r1.confirm_token), owner())
+    assert r2.status == "executed"
+
+
+@pytest.mark.parametrize("case", PREVIOUSLY_UNGATED_L3_ACTIONS)
+def test_previously_ungated_L3_system_operator_executes_without_token(bare, case):
+    _approve_l3_target(bare, case)
+    r = bare.router.execute(_l3_intent(case), system())
+    assert r.status == "executed"
+
+
+@pytest.mark.parametrize("case", PREVIOUSLY_UNGATED_L3_ACTIONS)
+def test_previously_ungated_L3_emergency_intent_executes_without_token(bare, case):
+    _approve_l3_target(bare, case)
+    r = bare.router.execute(_l3_intent(case, emergency=True), owner())
+    assert r.status == "executed"
+
+
 def test_evcharger_zero_amps_is_off_but_three_amps_still_fails(bare):
     off = bare.router.execute(Intent("house_a", "evcharger", "main", "set_limit", {"amps": 0}), owner())
-    assert off.status == "executed"
+    assert off.status == "confirm_required" and off.confirm_token
+    confirmed = bare.router.execute(
+        Intent("house_a", "evcharger", "main", "set_limit", {"amps": 0},
+               confirm_token=off.confirm_token), owner())
+    assert confirmed.status == "executed"
     too_low = bare.router.execute(Intent("house_a", "evcharger", "main", "set_limit", {"amps": 3}), owner())
     assert too_low.status == "confirm_required" and "envelope" in too_low.message
 
