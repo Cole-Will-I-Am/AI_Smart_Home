@@ -48,6 +48,16 @@ def test_slots_are_independent():
     assert m.observe("house_a", "house_a.power.circuit_office", 1500.0, 11) is None
 
 
+def test_identical_entity_ids_across_houses_have_independent_baselines():
+    m = BaselineModel(min_samples=24)
+    entity = "power.circuit_office"
+    for _ in range(24):
+        m.observe("house_a", entity, 100.0, 8)
+        m.observe("house_b", entity, 900.0, 8)
+    assert m.observe("house_a", entity, 900.0, 8) is not None
+    assert m.observe("house_b", entity, 900.0, 8) is None
+
+
 def test_persistence_roundtrip():
     m = BaselineModel(min_samples=24)
     entity, slot = _train(m)

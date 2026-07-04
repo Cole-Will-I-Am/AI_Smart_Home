@@ -62,9 +62,10 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
     net = NetSim(state)
     adapter = adapter or SimAdapter(ha, net)
     health = HealthRegistry()
-    for h in houses.values():
-        for eid in h.entities:
-            health.heartbeat(eid, 0)   # seed: every device is responsive at boot
+    if isinstance(adapter, SimAdapter):
+        for h in houses.values():
+            for eid in h.entities:
+                health.heartbeat(eid, 0)   # sim devices are in-process and responsive at boot
     router = CommandRouter(engine, state, adapter, audit, health=health)
     # R6: enrollments and standing consent survive a restart when persist_dir is set (real mode).
     id_path = del_path = None

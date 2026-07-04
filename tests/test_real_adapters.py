@@ -77,6 +77,15 @@ def test_ha_safety_action_verified_and_unverified():
     assert not res["ok"] and "UNVERIFIED" in res["message"]
 
 
+def test_ha_unmapped_safety_action_is_never_reported_verified():
+    tr = FakeTransport()
+    ha = HomeAssistantAdapter("http://ha:8123", "T", transport=tr)
+    res = ha.apply(Intent("house_a", "generator", "main", "start"))
+    assert not res["ok"] and "UNVERIFIED" in res["message"]
+    assert not res.get("verified")
+    assert not tr.posts("/api/services/button/press")
+
+
 def test_ha_adapter_is_fail_closed_on_unknown_action():
     # unlock_unknown (L4, blocked by the router) must NOT map to lock.unlock at the adapter either
     ha = HomeAssistantAdapter("http://ha:8123", "T", transport=FakeTransport())

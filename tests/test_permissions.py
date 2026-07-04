@@ -75,6 +75,13 @@ def test_L3_approved_hardware_with_confirm(bare):
     assert r2.status == "executed"
 
 
+def test_evcharger_zero_amps_is_off_but_three_amps_still_fails(bare):
+    off = bare.router.execute(Intent("house_a", "evcharger", "main", "set_limit", {"amps": 0}), owner())
+    assert off.status == "executed"
+    too_low = bare.router.execute(Intent("house_a", "evcharger", "main", "set_limit", {"amps": 3}), owner())
+    assert too_low.status == "confirm_required" and "envelope" in too_low.message
+
+
 def test_all_refusals_are_logged(bare):
     bare.router.execute(Intent("house_a", "lock", "front_door", "unlock_unknown"), ai())
     bare.router.execute(Intent("house_a", "safety", "panel", "bypass"), owner())

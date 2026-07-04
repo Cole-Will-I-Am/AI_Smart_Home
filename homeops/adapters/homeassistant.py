@@ -17,7 +17,7 @@ from typing import Any, Callable
 
 from .base import Adapter
 from .http import HttpClient, Transport
-from ..permissions import Intent
+from ..permissions import Intent, SAFETY_CRITICAL
 from ..events import Event, EventBus
 
 # H3: a well-formed HA entity_id is `<domain>.<object_id>`; both halves are lowercase
@@ -197,6 +197,11 @@ class HomeAssistantAdapter(Adapter):
                 else "no HA mapping"
             return {"ok": False, "message": f"{reason} for {intent.subsystem}.{intent.action} ({intent.entity_id})"}
         domain, service, data, ha_entity = r
+        expect = _VERIFY_EXPECT.get((domain, service))
+        if (intent.subsystem, intent.action) in SAFETY_CRITICAL and expect is None:
+            return {"ok": False,
+                    "message": f"HA {domain}.{service} {ha_entity} UNVERIFIED (no read-back mapping)",
+                    "undo": None}
         prior = self._get_state(ha_entity)
         undo = self._undo_for(domain, ha_entity, prior)
         body = {"entity_id": ha_entity}
@@ -206,7 +211,7 @@ class HomeAssistantAdapter(Adapter):
             return {"ok": False, "message": f"HA {domain}.{service} -> HTTP {status}"}
         # Post-actuation verification for safety-impacting actions: HTTP 200 is not proof the
         # physical device moved. Read the state back and require it to be what we commanded.
-        expect = _VERIFY_EXPECT.get((domain, service))
+        verified = False
         if self.verify_safety and expect is not None:
             after = self._get_state(ha_entity)
             actual = after.get("state") if after else None
@@ -214,9 +219,13 @@ class HomeAssistantAdapter(Adapter):
                 return {"ok": False,
                         "message": f"HA {domain}.{service} {ha_entity} UNVERIFIED (state={actual!r}, expected {expect!r})",
                         "undo": None}
+            verified = True
         # verified=True tells the router this adapter already confirmed the outcome against the real
         # device — the router must NOT re-verify against the (sim-style) state store.
-        return {"ok": True, "message": f"HA {domain}.{service} {ha_entity}", "undo": undo, "verified": True}
+        res = {"ok": True, "message": f"HA {domain}.{service} {ha_entity}", "undo": undo}
+        if verified:
+            res["verified"] = True
+        return res
 
     def undo(self, undo: dict) -> None:
         u = undo.get("ha_undo")

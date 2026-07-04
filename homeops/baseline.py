@@ -63,7 +63,7 @@ class Anomaly:
 
 
 class BaselineModel:
-    """Per-(entity, slot) robust baselines over a bounded window.
+    """Per-(house, entity, slot) robust baselines over a bounded window.
 
     `min_samples` gates scoring (no verdicts from thin evidence); `abs_floor` is a
     per-entity dead-band so a near-zero MAD (very steady signal) cannot inflate trivial
@@ -79,14 +79,14 @@ class BaselineModel:
         self.z_threshold = z_threshold
         self.default_floor = 0.0 if abs_floor is None else abs_floor
         self.floors = dict(floors or {})
-        self._buckets: dict[tuple[str, int], deque[float]] = {}
+        self._buckets: dict[tuple[str, str, int], deque[float]] = {}
 
     # -- learning / scoring ----------------------------------------------------------
     def observe(self, house_id: str, entity_id: str, value: float, slot: int) -> Anomaly | None:
         """Score `value` against the learned baseline, then absorb it. Returns an
         Anomaly when the deviation is both statistically extreme and physically material."""
         slot = int(slot) % SLOTS
-        key = (entity_id, slot)
+        key = (house_id, entity_id, slot)
         bucket = self._buckets.get(key)
         if bucket is None:
             bucket = self._buckets[key] = deque(maxlen=self.window)
@@ -105,12 +105,12 @@ class BaselineModel:
 
     # -- persistence (JSON-safe) -----------------------------------------------------
     def to_dict(self) -> dict:
-        return {f"{e}|{s}": list(v) for (e, s), v in self._buckets.items()}
+        return {f"{h}|{e}|{s}": list(v) for (h, e, s), v in self._buckets.items()}
 
     def load_dict(self, d: dict) -> None:
         for k, xs in d.items():
-            e, s = k.rsplit("|", 1)
-            self._buckets[(e, int(s))] = deque([float(x) for x in xs], maxlen=self.window)
+            h, e, s = k.rsplit("|", 2)
+            self._buckets[(h, e, int(s))] = deque([float(x) for x in xs], maxlen=self.window)
 
 
 class AnomalyMonitor:

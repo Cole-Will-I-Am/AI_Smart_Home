@@ -252,7 +252,35 @@ class CommandRouter:
             return refuse(f"device {entity_id} is {self.health.status(entity_id, self.engine.tick)} "
                           f"— refusing safety-critical rollback", meta, eff)
         self.audit.consume_rollback(token)   # single-use
-        self.adapter.undo(undo)
+        try:
+            self.adapter.undo(undo)
+        except Exception as e:   # noqa: BLE001 — rollback faults must be audited truthfully
+            if self.health is not None:
+                self.health.mark_unknown(entity_id)
+            self.audit.record(AuditRecord(
+                tick=self.engine.tick, operator=operator.kind, house_id=house,
+                subsystem=meta.get("subsystem", "advisory"), target=meta.get("target", "rollback"),
+                action="rollback", args={"token": token, "inverse": f"{inverse[0]}.{inverse[1]}"},
+                level=eff, status="error",
+                message=f"rollback fault (= {inverse[0]}.{inverse[1]}) - state UNKNOWN: "
+                        f"{type(e).__name__}: {e}"))
+            return False
+        if inverse in SAFETY_CRITICAL:
+            expect = EXPECTED_STATE.get(inverse)
+            actual = self.state.get_state(entity_id)
+            if expect is None or actual not in expect:
+                if self.health is not None:
+                    self.health.mark_unknown(entity_id)
+                self.audit.record(AuditRecord(
+                    tick=self.engine.tick, operator=operator.kind, house_id=house,
+                    subsystem=meta.get("subsystem", "advisory"), target=meta.get("target", "rollback"),
+                    action="rollback", args={"token": token, "inverse": f"{inverse[0]}.{inverse[1]}"},
+                    level=eff, status="unverified",
+                    message=f"rollback UNVERIFIED (= {inverse[0]}.{inverse[1]}) "
+                            f"state={actual!r}, expected {expect} - NOT recorded as applied"))
+                return False
+            if self.health is not None:
+                self.health.heartbeat(entity_id, self.engine.tick)
         self.audit.record(AuditRecord(
             tick=self.engine.tick, operator=operator.kind, house_id=house,
             subsystem=meta.get("subsystem", "advisory"), target=meta.get("target", "rollback"),

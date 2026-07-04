@@ -19,6 +19,24 @@ def test_rollback(bare):
     assert bare.state.get_state("house_a.light.living_room") == "off"
 
 
+def test_rollback_undo_exception_audits_error_not_success(bare):
+    r = bare.router.execute(Intent("house_a", "light", "living_room", "turn_on"), owner())
+    assert r.rollback_token
+    original_undo = bare.adapter.undo
+
+    def boom(undo):
+        raise RuntimeError("undo transport failed")
+
+    bare.adapter.undo = boom
+    try:
+        assert bare.router.rollback(r.rollback_token, owner()) is False
+    finally:
+        bare.adapter.undo = original_undo
+    rec = bare.audit.records[-1]
+    assert rec.status == "error" and "state UNKNOWN" in rec.message
+    assert rec.message != "rollback applied"
+
+
 def test_valve_takes_ticks_to_close(bare):
     r1 = bare.router.execute(Intent("house_a", "water", "main_valve", "shutoff_main"), owner())
     r2 = bare.router.execute(

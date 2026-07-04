@@ -160,10 +160,19 @@ def _quiet(args: dict, now) -> str | None:
             if in_quiet else None)
 
 
+def _ev_amps(args: dict, now) -> str | None:
+    try:
+        if float(args.get("amps")) == 0:
+            return None   # 0 = charger off
+    except (TypeError, ValueError):
+        pass
+    return _within(args, "amps", 6, 48)
+
+
 # (subsystem, action) -> callable(args, now) returning a violation reason, or None if fine.
 ARG_INVARIANTS: dict[tuple[str, str], Any] = {
     ("climate", "set_temperature"): lambda a, now: _within(a, "temperature", 50, 90),
-    ("evcharger", "set_limit"):     lambda a, now: _within(a, "amps", 6, 48),
+    ("evcharger", "set_limit"):     _ev_amps,
     ("speaker", "announce"):        _quiet,
 }
 

@@ -1,4 +1,5 @@
 """Part 2 — verified actuation + device health."""
+from homeops import build_world
 from homeops.permissions import Intent, Operator
 from homeops.simulator import devices
 
@@ -25,6 +26,25 @@ def test_stale_device_refused_then_heartbeat_recovers(world):
     world.health.heartbeat("house_a.lock.front_door", world.engine.tick)
     r2 = world.router.execute(Intent("house_a", "lock", "front_door", "lock"), owner())
     assert r2.status == "executed"
+
+
+def test_real_mode_unknown_health_refuses_safety_critical_actuation():
+    class RealAdapter:
+        def __init__(self):
+            self.applied = []
+
+        def apply(self, intent):
+            self.applied.append(intent)
+            return {"ok": True, "message": "should not apply", "undo": None}
+
+        def undo(self, undo):
+            pass
+
+    adapter = RealAdapter()
+    world = build_world(register_automations=False, adapter=adapter)
+    r = world.router.execute(Intent("house_a", "lock", "front_door", "lock"), owner())
+    assert r.status == "refused" and "unknown" in r.message
+    assert adapter.applied == []
 
 
 def test_unresponsive_device_is_unverified(world):

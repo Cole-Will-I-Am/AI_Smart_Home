@@ -24,6 +24,10 @@ class HealthRegistry:
     def mark_offline(self, entity_id: str) -> None:
         self._offline.add(entity_id)
 
+    def mark_unknown(self, entity_id: str) -> None:
+        self._offline.discard(entity_id)
+        self._last_seen.pop(entity_id, None)
+
     def status(self, entity_id: str, now: int) -> str:
         if entity_id in self._offline:
             return "offline"
@@ -33,5 +37,5 @@ class HealthRegistry:
         return "ok" if (now - last) <= self.window else "stale"
 
     def healthy(self, entity_id: str, now: int) -> bool:
-        # "unknown" (never seeded) is permissive; offline/stale are not.
-        return self.status(entity_id, now) in ("ok", "unknown")
+        # Unknown devices have not produced a heartbeat/preflight and fail closed.
+        return self.status(entity_id, now) == "ok"
