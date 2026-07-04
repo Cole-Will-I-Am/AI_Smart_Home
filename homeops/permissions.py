@@ -311,6 +311,12 @@ class PermissionEngine:
 
     # --- rate limiting -------------------------------------------------------
     def allow_rate(self, intent: Intent) -> bool:
+        # R8: rate limiting is an anti-nuisance VOLUME cap; a pre-authorized emergency response
+        # must never be dropped because a subsystem hit its per-tick count. (Cooldown, a mechanical
+        # minimum interval between destructive actuations, still applies even to emergencies —
+        # rapidly repeating a destructive action is itself the hazard it guards against.)
+        if intent.emergency:
+            return True
         k = (intent.house_id, intent.subsystem)
         tick, count = self._rate.get(k, (self.tick, 0))
         if tick != self.tick:
