@@ -12,6 +12,8 @@ part that matters and is real.
 from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
+import json
+import os
 import secrets
 import threading
 import time
@@ -51,10 +53,41 @@ def _hash(token: str) -> str:
 
 
 class IdentityStore:
-    def __init__(self) -> None:
+    def __init__(self, path: str | None = None) -> None:
         self._by_token: dict[str, Principal] = {}   # hashed token -> Principal
         self._expiry: dict[str, float] = {}         # R5: hashed token -> wall-clock expiry; absent = never
         self._lock = threading.Lock()               # R2: enroll/revoke/authenticate mutate shared maps
+        self._path = path                           # R6: None = in-memory; a path persists enrollments
+        if path and os.path.exists(path):
+            self._load()
+
+    # --- R6: durable enrollment across restart -------------------------------------------
+    def _snapshot(self) -> list[dict]:
+        out = []
+        for h, p in self._by_token.items():
+            scope = "*" if p.houses == "*" else sorted(p.houses)
+            out.append({"h": h, "id": p.id, "role": p.role.name,
+                        "houses": scope, "expires": self._expiry.get(h)})
+        return out
+
+    def _save(self) -> None:
+        """Atomic, 0600 snapshot. Only HASHED tokens are stored — never a bearer secret.
+        Callers hold self._lock. A restart reloads exactly these enrollments (R6)."""
+        if not self._path:
+            return
+        tmp = self._path + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(self._snapshot(), f)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, self._path)   # rename is atomic — a crash never leaves a half-written store
+
+    def _load(self) -> None:
+        with open(self._path) as f:
+            for e in json.load(f):
+                houses = "*" if e["houses"] == "*" else frozenset(e["houses"])
+                self._by_token[e["h"]] = Principal(e["id"], ROLES[e["role"]], houses)
+                if e.get("expires") is not None:
+                    self._expiry[e["h"]] = e["expires"]
 
     def register(self, principal_id: str, role_name: str, houses="*", token: str | None = None,
                  ttl_seconds: float | None = None) -> str:
@@ -67,6 +100,7 @@ class IdentityStore:
                 self._expiry[h] = time.time() + ttl_seconds
             else:
                 self._expiry.pop(h, None)
+            self._save()
         return tok   # returned once; only the hash is stored
 
     def authenticate(self, token: str) -> Principal | None:
@@ -79,6 +113,7 @@ class IdentityStore:
             if exp is not None and time.time() >= exp:
                 self._by_token.pop(h, None)   # R5: expired credential auto-purges on use
                 self._expiry.pop(h, None)
+                self._save()                  # R6: the purge is durable too
                 return None
             return p
 
@@ -87,7 +122,10 @@ class IdentityStore:
         h = _hash(token or "")
         with self._lock:
             self._expiry.pop(h, None)
-            return self._by_token.pop(h, None) is not None
+            gone = self._by_token.pop(h, None) is not None
+            if gone:
+                self._save()
+            return gone
 
     def revoke_principal(self, principal_id: str) -> int:
         """R5: revoke every credential a principal holds (e.g. a departed delegate). Returns count."""
@@ -96,6 +134,8 @@ class IdentityStore:
             for h in hs:
                 self._by_token.pop(h, None)
                 self._expiry.pop(h, None)
+            if hs:
+                self._save()
             return len(hs)
 
 
