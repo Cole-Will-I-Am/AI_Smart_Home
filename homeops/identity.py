@@ -13,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import secrets
+import threading
+import time
 
 from .permissions import Operator
 
@@ -51,15 +53,50 @@ def _hash(token: str) -> str:
 class IdentityStore:
     def __init__(self) -> None:
         self._by_token: dict[str, Principal] = {}   # hashed token -> Principal
+        self._expiry: dict[str, float] = {}         # R5: hashed token -> wall-clock expiry; absent = never
+        self._lock = threading.Lock()               # R2: enroll/revoke/authenticate mutate shared maps
 
-    def register(self, principal_id: str, role_name: str, houses="*", token: str | None = None) -> str:
+    def register(self, principal_id: str, role_name: str, houses="*", token: str | None = None,
+                 ttl_seconds: float | None = None) -> str:
         tok = token or secrets.token_urlsafe(16)
         scope = "*" if houses == "*" else frozenset(houses)
-        self._by_token[_hash(tok)] = Principal(principal_id, ROLES[role_name], scope)
+        h = _hash(tok)
+        with self._lock:
+            self._by_token[h] = Principal(principal_id, ROLES[role_name], scope)
+            if ttl_seconds is not None:
+                self._expiry[h] = time.time() + ttl_seconds
+            else:
+                self._expiry.pop(h, None)
         return tok   # returned once; only the hash is stored
 
     def authenticate(self, token: str) -> Principal | None:
-        return self._by_token.get(_hash(token or ""))
+        h = _hash(token or "")
+        with self._lock:
+            p = self._by_token.get(h)
+            if p is None:
+                return None
+            exp = self._expiry.get(h)
+            if exp is not None and time.time() >= exp:
+                self._by_token.pop(h, None)   # R5: expired credential auto-purges on use
+                self._expiry.pop(h, None)
+                return None
+            return p
+
+    def revoke(self, token: str) -> bool:
+        """R5: immediately invalidate a device/bearer token. True if a credential was removed."""
+        h = _hash(token or "")
+        with self._lock:
+            self._expiry.pop(h, None)
+            return self._by_token.pop(h, None) is not None
+
+    def revoke_principal(self, principal_id: str) -> int:
+        """R5: revoke every credential a principal holds (e.g. a departed delegate). Returns count."""
+        with self._lock:
+            hs = [h for h, pr in self._by_token.items() if pr.id == principal_id]
+            for h in hs:
+                self._by_token.pop(h, None)
+                self._expiry.pop(h, None)
+            return len(hs)
 
 
 def operator_for(principal: Principal, active_house: str) -> Operator:
