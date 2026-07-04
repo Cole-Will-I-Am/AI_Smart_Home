@@ -23,6 +23,7 @@ under substitution of the MODEL (Part 17); here it is invariant under substituti
 from __future__ import annotations
 from dataclasses import dataclass, field
 import secrets as _secrets
+import threading
 import time
 
 from ..permissions import Attestation, Intent
@@ -87,6 +88,7 @@ class Gateway:
         self.pending_ttl = pending_ttl
         self._devices: dict[str, Device] = {}
         self._pending: dict[str, Pending] = {}
+        self._lock = threading.RLock()   # R2: _pending/_devices shared across gateway threads
 
     # ---- device enrollment (reference-impl: hashed bearer via IdentityStore) --------------
     def enroll(self, device_id: str, role: str, houses="*", surface: str = "app",
@@ -112,7 +114,8 @@ class Gateway:
 
     def _sweep(self) -> None:
         now = self._now()
-        self._pending = {k: p for k, p in self._pending.items() if p.expires_tick >= now}
+        with self._lock:
+            self._pending = {k: p for k, p in self._pending.items() if p.expires_tick >= now}
 
     # ---- the one write path ---------------------------------------------------------------
     def submit_intent(self, token: str, body: dict) -> dict:
@@ -148,13 +151,14 @@ class Gateway:
             # Hold the intent + engine attestation server-side; only a confirming surface can
             # approve it. The natural_language field (if any) is stored for audit, never trusted.
             self._sweep()
-            pid = "pnd_" + _secrets.token_urlsafe(9)
-            now = self._now()
-            p = Pending(pending_id=pid, intent=intent, level=r.level, attestation=r.attestation,
-                        created_by_surface=surface, created_by_device=device.device_id,
-                        house_id=house_id, created_tick=now, expires_tick=now + self.pending_ttl,
-                        message=r.message)
-            self._pending[pid] = p
+            with self._lock:
+                pid = "pnd_" + _secrets.token_urlsafe(9)
+                now = self._now()
+                p = Pending(pending_id=pid, intent=intent, level=r.level, attestation=r.attestation,
+                            created_by_surface=surface, created_by_device=device.device_id,
+                            house_id=house_id, created_tick=now, expires_tick=now + self.pending_ttl,
+                            message=r.message)
+                self._pending[pid] = p
             out["pending_id"] = pid
             out["effect"] = r.attestation.effect if r.attestation else None
         return out
@@ -171,7 +175,8 @@ class Gateway:
                     "message": f"device {device.device_id} ({device.principal.role.name}) "
                                "may not confirm — use a confirming surface (phone/tablet)"}
         self._sweep()
-        p = self._pending.get(pending_id)
+        with self._lock:
+            p = self._pending.get(pending_id)
         if p is None:
             return {"status": "not_found", "message": f"no pending confirmation {pending_id!r} "
                                                       "(expired, denied, or already handled)"}
@@ -187,7 +192,8 @@ class Gateway:
         if p.attestation is not None:
             truth = eng.attest(intent, operator, eng.level(intent.subsystem, intent.action))
             if not eng.verify_attestation(p.attestation) or p.attestation.effect != truth.effect:
-                del self._pending[pending_id]
+                with self._lock:
+                    self._pending.pop(pending_id, None)
                 return {"status": "refused",
                         "message": "attestation did not verify — refusing to execute unverified consent"}
 
@@ -196,7 +202,8 @@ class Gateway:
             intent.confirm_token = r.confirm_token   # engine -> gateway -> engine; never a client
             r = self.world.router.execute(intent, operator)
         if r.status in ("executed", "prohibited", "recommend_only", "refused", "unverified"):
-            self._pending.pop(pending_id, None)   # terminal outcome consumes the pending
+            with self._lock:
+                self._pending.pop(pending_id, None)   # terminal outcome consumes the pending
         out = {"status": r.status, "level": r.level, "message": r.message,
                "confirmed_by": device.principal.id}
         if r.rollback_token:
@@ -207,7 +214,8 @@ class Gateway:
         device = self._device_for(token)
         if device is None:
             return {"status": "unauthorized", "message": "unknown or missing device token"}
-        p = self._pending.pop(pending_id, None)
+        with self._lock:
+            p = self._pending.pop(pending_id, None)
         if p is None:
             return {"status": "not_found", "message": f"no pending confirmation {pending_id!r}"}
         # audited as a first-class decision through the router's advisory path
@@ -220,11 +228,15 @@ class Gateway:
 
     # ---- reads ----------------------------------------------------------------------------
     def list_pending(self, token: str, house_id: str | None = None) -> dict:
-        if self._device_for(token) is None:
+        device = self._device_for(token)
+        if device is None:
             return {"status": "unauthorized"}
         self._sweep()
-        items = [p.to_dict() for p in self._pending.values()
-                 if house_id is None or p.house_id == house_id]
+        scope = device.principal.houses
+        with self._lock:
+            items = [p.to_dict() for p in self._pending.values()
+                     if (house_id is None or p.house_id == house_id)
+                     and (scope == "*" or p.house_id in scope)]   # R9: a device sees only its own scope
         return {"pending": items}
 
     def state(self, token: str, house_id: str | None = None) -> dict:
@@ -245,7 +257,13 @@ class Gateway:
         return {"houses": houses}
 
     def events(self, token: str, house_id: str | None = None, n: int = 20) -> dict:
-        if self._device_for(token) is None:
+        device = self._device_for(token)
+        if device is None:
             return {"status": "unauthorized"}
+        scope = device.principal.houses
+        if house_id is not None and scope != "*" and house_id not in scope:
+            return {"events": []}   # R9: requested a house outside this device's scope
         evs = self.world.bus.recent(n=n, house_id=house_id)
+        if scope != "*":
+            evs = [e for e in evs if e.house_id in scope]   # R9: filter cross-scope events
         return {"events": [{"type": e.type, "house": e.house_id, "data": e.data} for e in evs]}
