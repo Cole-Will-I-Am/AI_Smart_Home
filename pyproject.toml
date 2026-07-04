@@ -3,7 +3,7 @@ name = "homeops"
 version = "0.1.0"
 description = "Two-house AI ops layer — runnable mocked reference implementation"
 requires-python = ">=3.10"
-dependencies = ["PyYAML>=6.0"]
+dependencies = ["PyYAML>=6.0,<7.0"]
 
 [tool.pytest.ini_options]
 markers = [
