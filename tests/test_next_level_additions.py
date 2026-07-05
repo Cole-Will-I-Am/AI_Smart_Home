@@ -201,3 +201,92 @@ def test_validation_harness_quantifies_error(w):
     assert good["trustworthy"] and good["mae"] <= 1.0
     bad = w.predictive.validate([{"predicted": 50.0, "observed": 60.0}])
     assert not bad["trustworthy"]
+
+
+# ------------------------------------------------------------------ escalation-evidence guard
+# Regression guard for the integration bug the tiers surfaced: Director.escalate() silently
+# rejects any evidence that validate_for_trigger() would fail, so a call site that omits the
+# required discriminator (e.g. a LIFE_SAFETY_INFERENCE without a valid "kind") is a silent
+# no-op. These tests pin that EVERY real escalation path produces accepted evidence.
+
+def test_conformance_escalation_evidence_is_accepted(w):
+    """The conformance monitor's escalation must satisfy validate_for_trigger (carry a
+    life-safety kind), or the Director would ignore it."""
+    from homeops.director import SemanticDelta, validate_for_trigger
+    captured = {}
+    orig = w.director.escalate
+    def spy(house_id, trigger, evidence):
+        captured["ev"] = evidence
+        captured["ok"] = validate_for_trigger(
+            SemanticDelta("t", trigger, house_id, 0, dict(evidence)))
+        return orig(house_id, trigger, evidence)
+    w.director.escalate = spy
+    w.conformance._open("INV-LEAK-MAIN", "house_a", {"cause": "test"})
+    for _ in range(5):
+        w.tick()
+    assert captured.get("ok") is True, f"conformance escalation evidence rejected: {captured.get('ev')}"
+
+
+def test_leak_gate_escalation_evidence_is_accepted(w):
+    """The sensor-integrity leak gate's escalation must likewise be accepted."""
+    from homeops.director import SemanticDelta, validate_for_trigger
+    # spoof the flow channel untrusted
+    _set(w, "sensor.pressure", 60.0)
+    for _ in range(3):
+        _set(w, "sensor.flow_meter", 45.0)
+        w.integrity.evaluate("house_a")
+    captured = {}
+    orig = w.director.escalate
+    def spy(house_id, trigger, evidence):
+        captured["ok"] = validate_for_trigger(
+            SemanticDelta("t", trigger, house_id, 0, dict(evidence)))
+        captured["ev"] = evidence
+        return orig(house_id, trigger, evidence)
+    w.director.escalate = spy
+    _set(w, "sensor.leak_kitchen", "wet")
+    w.bus.publish(Event("leak", "house_a", "house_a.sensor.leak_kitchen", {}, tick=w.engine.tick))
+    assert captured.get("ok") is True, f"leak-gate escalation evidence rejected: {captured.get('ev')}"
+
+
+def test_all_static_escalation_callsites_have_required_discriminator():
+    """Static guard: for every escalate() call whose Trigger requires a *discriminator key*
+    (MANUAL_ESCALATE -> 'by'; LIFE_SAFETY_INFERENCE -> a valid 'kind'), assert the evidence
+    literal supplies it. Numeric-threshold triggers (HEALTH_CASCADE / ACTUATION_FAILURE_RATE)
+    carry runtime values a literal can't witness and are covered by the runtime tests above.
+    This catches a new life-safety call site that forgets 'kind' without executing it."""
+    import ast
+    import pathlib
+    from homeops.director import LIFE_SAFETY_KINDS
+
+    required = {"LIFE_SAFETY_INFERENCE": "kind", "MANUAL_ESCALATE": "by"}
+    root = pathlib.Path(__file__).resolve().parent.parent / "homeops"
+    offenders = []
+    for path in root.rglob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+                    and node.func.attr == "escalate" and len(node.args) >= 3
+                    and isinstance(node.args[2], ast.Dict)
+                    and isinstance(node.args[1], ast.Attribute)):
+                continue
+            trig = node.args[1].attr
+            if trig not in required:
+                continue
+            key = required[trig]
+            keys = {k.value for k in node.args[2].keys if isinstance(k, ast.Constant)}
+            if key not in keys:
+                offenders.append((str(path.relative_to(root.parent)), node.lineno, trig, key))
+                continue
+            # for LIFE_SAFETY_INFERENCE, also check any *constant* kind is a valid one
+            if trig == "LIFE_SAFETY_INFERENCE":
+                for k, v in zip(node.args[2].keys, node.args[2].values):
+                    if isinstance(k, ast.Constant) and k.value == "kind":
+                        consts = ([v.value] if isinstance(v, ast.Constant)
+                                  else [b.value for b in (getattr(v, "body", None), getattr(v, "orelse", None))
+                                        if isinstance(b, ast.Constant)])
+                        for c in consts:
+                            if c not in LIFE_SAFETY_KINDS:
+                                offenders.append((str(path.relative_to(root.parent)),
+                                                  node.lineno, trig, f"kind={c!r} not in LIFE_SAFETY_KINDS"))
+    assert not offenders, "escalate() call sites missing a required discriminator:\n" + \
+        "\n".join(f"  {p}:{ln}  {t}  needs {k}" for p, ln, t, k in offenders)
