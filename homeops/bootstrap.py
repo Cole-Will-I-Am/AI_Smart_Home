@@ -42,6 +42,7 @@ class World:
     integrity: object | None = None         # sensor-integrity / causal-consistency tier
     conformance: object | None = None       # runtime safety-invariant monitor
     predictive: object | None = None        # advisory counterfactual (forward-sim) gate
+    prognostics: object | None = None       # remaining-useful-life / equipment health tier
 
     def tick(self, n: int = 1) -> None:
         for _ in range(n):
@@ -53,6 +54,8 @@ class World:
                 self.director.evaluate()
             if self.conformance is not None:
                 self.conformance.evaluate()
+            if self.prognostics is not None:
+                self.prognostics.evaluate()
 
     def notify(self, house_id: str, message: str, urgent: bool = False) -> None:
         self.notifications.append({"house_id": house_id, "message": message, "urgent": urgent,
@@ -111,6 +114,8 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
             e = w.state.entity(f"{hid}.sensor.smoke_co_hall")
             return e is not None and e.state != "clear"
         world.predictive = CounterfactualGate(fire_inferred=_fire_inferred).attach(world)
+        from .prognostics import PrognosticsMonitor
+        world.prognostics = PrognosticsMonitor().attach(world)
     return world
 
 
