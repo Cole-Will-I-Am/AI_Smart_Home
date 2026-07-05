@@ -40,9 +40,28 @@ def register(world) -> None:
                 flow_bad = True
                 flow_abnormal = True
             if sensor_wet and flow_abnormal:
-                do(h, "water", "main_valve", "shutoff_main", emergency=True)
-                reason = "wet sensor + unreadable flow" if flow_bad else "wet sensor + abnormal flow"
-                world.notify(h, f"Leak confirmed ({reason}): main water shutting off", urgent=True)
+                # Causal-consistency gate: the two signals must also be TRUSTED. If the
+                # sensor-integrity tier has withdrawn trust from either channel (e.g. flow
+                # pinned high while pressure never dropped — a spoofed meter), the two-signal
+                # test is not honestly satisfied. Withhold the destructive shutoff and escalate
+                # to a human instead of auto-closing the main on a manufactured emergency.
+                integ = getattr(world, "integrity", None)
+                flow_id = f"{h}.sensor.flow_meter"
+                trusted = integ is None or (integ.trusts(ev.entity_id) and integ.trusts(flow_id))
+                if not trusted:
+                    world.notify(h, ("Leak signals present but sensor integrity is compromised "
+                                     "(possible spoof): withholding auto-shutoff, escalating to a human"),
+                                 urgent=True)
+                    d = getattr(world, "director", None)
+                    if d is not None:
+                        from .director import Trigger
+                        d.escalate(h, Trigger.LIFE_SAFETY_INFERENCE,
+                                   {"kind": "leak", "reason": "leak_signal_untrusted",
+                                    "untrusted": [e for e in (ev.entity_id, flow_id) if not integ.trusts(e)]})
+                else:
+                    do(h, "water", "main_valve", "shutoff_main", emergency=True)
+                    reason = "wet sensor + unreadable flow" if flow_bad else "wet sensor + abnormal flow"
+                    world.notify(h, f"Leak confirmed ({reason}): main water shutting off", urgent=True)
 
         # 2. Unknown device joins the network -> quarantine
         elif ev.type == "network_join":

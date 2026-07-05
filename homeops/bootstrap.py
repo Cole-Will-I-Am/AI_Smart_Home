@@ -39,6 +39,9 @@ class World:
     anomaly_monitor: object | None = None   # vigilance tier (attached in build_world)
     inference: object | None = None         # composite advisory tier (attached in build_world)
     director: object | None = None          # operating-mode FSM (attached in build_world)
+    integrity: object | None = None         # sensor-integrity / causal-consistency tier
+    conformance: object | None = None       # runtime safety-invariant monitor
+    predictive: object | None = None        # advisory counterfactual (forward-sim) gate
 
     def tick(self, n: int = 1) -> None:
         for _ in range(n):
@@ -48,6 +51,8 @@ class World:
                 self.routines.evaluate_tick()
             if self.director is not None:
                 self.director.evaluate()
+            if self.conformance is not None:
+                self.conformance.evaluate()
 
     def notify(self, house_id: str, message: str, urgent: bool = False) -> None:
         self.notifications.append({"house_id": house_id, "message": message, "urgent": urgent,
@@ -97,6 +102,15 @@ def build_world(config_path: str = DEFAULT_CONFIG, register_automations: bool = 
         from .inference import InferenceRegistry
         world.anomaly_monitor = AnomalyMonitor(world).attach()
         world.inference = InferenceRegistry().attach(world)
+        from .sensor_integrity import SensorIntegrity
+        world.integrity = SensorIntegrity().attach(world)
+        from .conformance import ConformanceMonitor
+        world.conformance = ConformanceMonitor().attach(world)
+        from .predictive import CounterfactualGate
+        def _fire_inferred(hid, w=world):
+            e = w.state.entity(f"{hid}.sensor.smoke_co_hall")
+            return e is not None and e.state != "clear"
+        world.predictive = CounterfactualGate(fire_inferred=_fire_inferred).attach(world)
     return world
 
 

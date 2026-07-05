@@ -9,7 +9,7 @@
 *The AI proposes. A deterministic, fail-closed permission engine disposes.*
 
 ![python](https://img.shields.io/badge/python-3.10%2B-2f6bff?logo=python&logoColor=white&labelColor=0b1c40)
-![tests](https://img.shields.io/badge/tests-381%20passed-2ea043?labelColor=0b1c40)
+![tests](https://img.shields.io/badge/tests-395%20passed-2ea043?labelColor=0b1c40)
 ![core](https://img.shields.io/badge/core-stdlib--only-2f6bff?labelColor=0b1c40)
 ![cloud](https://img.shields.io/badge/cloud-none%20required-2f6bff?labelColor=0b1c40)
 ![models](https://img.shields.io/badge/models-any%20chat--completions%20model-2f6bff?labelColor=0b1c40)
@@ -88,20 +88,24 @@ The level is a property of the **action**, enforced server-side — the AI canno
 
 ## The stack above the engine
 
-The ladder governs a single *action*. Four deterministic tiers sit above it, each in the
+The ladder governs a single *action*. Seven deterministic tiers sit above it, each in the
 engine's jurisdiction — the reasoning model is an optional worker, never a dependency:
 
 ```text
   HOUSE DIRECTOR     who is driving?   AUTONOMOUS · AI_ACTIVE · HUMAN_OVERRIDE
      ↑ escalation detector (evidence-validated, cooldown'd) raises the mode
+  conformance tier   witnesses safety invariants live (G(leak⇒main|human), G(AI·L4⇒never)); breach → escalate
+  predictive tier    forward-sims a proposed L2+ action; refuses trajectories that break an invariant (shadow)
+  integrity tier     causal consistency: physically-impossible joint sensor states drop a sensor's trust
   autonomy tier      routines + standing authority act — engine-gated, revocable
   inference tier     fuses signals into situations (leak_suspected · ventilation_fault)
   vigilance tier     learns each sensor's own normal (median/MAD), flags deviation
-  ── permission engine ──  governs every individual action (L0–L5)
+  ── permission engine ──  governs every individual action (L0–L5), now also gated by sensor trust
   ── physical / local ──   always works; never waits on any layer above
 ```
 
-Reactive → vigilant → inferential → autonomous → *governed autonomy level*. Nothing above the
+Reactive → vigilant → inferential → autonomous → integrity-gated → predictively-checked →
+continuously-conformant → *governed autonomy level*. Nothing above the
 engine actuates except through it; nothing below it depends on anything above.
 
 ## Quickstart — a full estate in software, thirty seconds
@@ -111,10 +115,11 @@ architecture and permission model can be validated before a single device is bou
 
 ```bash
 pip install -r requirements.txt        # PyYAML + pytest (anthropic only for the live test)
-pytest -q                              # 381 offline tests: permissions, router, automations,
+pytest -q                              # 395 offline tests: permissions, router, automations,
                                        #   fail-safe, local-first, AI-ops, audit, health, RBAC,
                                        #   vigilance, inference, autonomy (routines), director,
-                                       #   portfolio, exporters, dashboard, service, preflight
+                                       #   portfolio, exporters, dashboard, service, preflight,
+                                       #   sensor-integrity, conformance, counterfactual
 python scripts/run_scenario.py all    # leak / grid-loss / fire-CO / intrusion / rogue-device
 python scripts/demo.py                # end-to-end: cross-house guard, WAN-down local-first, L4 refusal
 python -m homeops.cli status          # both houses at a glance
@@ -233,6 +238,9 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 | Model spams envelope-legal L1 actions all night | an **AI L1 nuisance budget** caps AI-originated L1 actuation per house per day; humans and emergency automations are exempt |
 | Model lies about what a pending action does, to farm a rubber-stamp | every `confirm_required` carries an **engine-signed attestation** (HMAC, key outside model context) rendering the true deed; `confirm()` refuses any signature mismatch — consent attaches to the deed, not its narration |
 | A noisy statistical inference drives actuation | the inference tier is **advisory-only** — it emits typed events and never actuates; any routine it triggers still routes every step through the engine, and safety-critical/destructive steps are never auto-authorized |
+| A compromised sensor plane manufactures a "legitimate" emergency (spoofed flow pinned high while pressure stays flat) to force a destructive shutoff | the **sensor-integrity tier** checks *causal consistency* between physically-coupled sensors; an impossible joint state debits that sensor's trust, and a sensor below the trust floor can no longer **satisfy the two-signal rule** — the shutoff is withheld and the house escalates to a human ([`test_next_level_additions.py`](tests/test_next_level_additions.py)) |
+| A safety property passes at commission time but silently drifts in the running house | the **conformance tier** evaluates the safety case as *live* bounded-time invariants every tick (verified fire ⇒ egress unlocked within N; verified leak ⇒ main closed or escalated; AI-originated L4/L5 ⇒ never executed); a breach is a hash-chained incident that raises the Director — safety is continuously witnessed, not green once |
+| A locally-legal action is globally unsafe over the next few steps (a shed that would cross battery reserve; a lock that strands an egress path during a fire) | the **predictive tier** forward-simulates the proposed L2+ action against end-state invariants *before* actuation; ships in **shadow** (advisory), promotable to a hard gate only after its `validate()` harness shows the forward model's error is small on that estate |
 | The AI installs a standing automation that runs the house | routines are **installed only by a human owner** (the AI proposes via `propose_routine`, never self-installs); L2+ steps fire autonomously only under carried install-time authority or a standing delegation; safety-critical/destructive steps and L4/L5 are refused auto-authorization |
 | The house runs itself with no sense of when to stop | the **House Director** escalates the operating mode to a human on a life-safety inference, health cascade, or repeated actuation failure (evidence-validated, cooldown'd); it governs *mode*, never actuation, and every transition is hash-chained |
 | Houses collapse onto shared devices | `strict_entity_map` fails startup if any controllable entity lacks an explicit mapping; the validator also rejects duplicate targets |
@@ -255,6 +263,9 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 | `homeops/baseline.py` | vigilance tier: robust per-entity hour-of-week baselines (median/MAD) -> advisory `anomaly` events; spike-proof, never actuates |
 | `homeops/energy.py` | economics tier: deterministic day-ahead battery/EV planner (never-worse guarantee); emits L3-gated *proposed* intents |
 | `homeops/inference.py` | inferential tier: fuses multiple advisory signals into higher-order typed events (`leak_suspected` = pressure-drop ∧ flow-rise; `ventilation_fault` = CO₂-high ∧ unoccupied); advisory-only, never actuates |
+| `homeops/sensor_integrity.py` | **sensor-integrity tier**: causal-consistency reducer over physically-coupled sensors (flow⇒pressure-drop, CO₂⇒occupancy, motion⇒power); impossible joint states lower a per-entity **trust score** that gates whether a sensor may satisfy the two-signal rule; never actuates, fails safe |
+| `homeops/conformance.py` | **conformance tier**: the safety case made live — bounded-time temporal invariants over the audit+event stream, evaluated every tick; a violation is a hash-chained incident that escalates the Director; pure reducer, tied to safety-case claims |
+| `homeops/predictive.py` | **predictive tier**: an advisory counterfactual gate — a physics-lite forward model rolls the estate N steps ahead and refuses trajectories that break an end-state invariant (freeze / battery reserve / egress-during-fire); shadow-mode, with a `validate()` promotion harness |
 | `homeops/routines.py` | governed standing automations: owner-installed `when → then` rules the engine runs continuously; each step routes through the ladder; carried install-time authority for reversible steps; AI proposes (`propose_routine`), never self-installs |
 | `homeops/director.py` | **House Director**: per-house operating-mode FSM (AUTONOMOUS · AI_ACTIVE · HUMAN_OVERRIDE) + escalation detector; governs *mode*, never actuation; every transition hash-chained |
 | `homeops/portfolio.py` · `dashboard.py` | N-property control plane · HTML oversight view |
@@ -265,13 +276,15 @@ stress-tested against a deliberately **hostile model**. Every row has a regressi
 ## Status — the honest ladder
 
 ```text
-reference implementation      ✓  complete, 381 tests
+reference implementation      ✓  complete, 395 tests
 pilot-ready software          ✓  audit chain · verified actuation · RBAC ·
                                  semantic envelopes · delegation certs ·
                                  authority-gated rollback · any-model plug ·
                                  L1 nuisance budget · signed attestations ·
                                  control-surface gateway (phone/tablet/voice) ·
                                  vigilance + inference tiers · standing automations ·
+                                 sensor-integrity (causal-consistency trust) ·
+                                 live conformance monitor · counterfactual gate ·
                                  House Director (operating-mode FSM) ·
                                  N-property plane · HA life-safety export ·
                                  dashboard · runtime service · secrets ·
